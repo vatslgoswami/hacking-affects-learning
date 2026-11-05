@@ -39,6 +39,11 @@ class GridWorld(gym.Env):
         obs = self._map_obs_to_np(obs)
         return obs, reward, terminated, truncated, info
 
+    def agent_observation(self):
+        obs_raw = self.env.agent_observation()
+        obs = self._map_obs_to_np(obs_raw)
+        return obs
+
     def _map_obs_to_np(self, obs):
         arr = []
         fields =  ["agent_x", "agent_y", "goal_x", "goal_y", "package_x", "package_y", 

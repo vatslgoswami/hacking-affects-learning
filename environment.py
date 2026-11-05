@@ -63,7 +63,7 @@ class Environment:
 
             if self._is_last_move():
                 terminated = True
-                info["termination_reason"] = "move limit reached"
+                info["move_limit_reached"] = True
             
             '''
             if action=="pickup":
@@ -76,7 +76,7 @@ class Environment:
                 immed_reward += claim_reward
                 if claim_succeeded:
                     terminated=True
-                    info["termination_reason"] = "claim successful"
+                    info["genuine_success"] = True
 
             else:
                 #  move positions and then fix if crossed boundary
