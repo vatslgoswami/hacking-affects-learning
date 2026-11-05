@@ -7,46 +7,106 @@ VALID_ACTIONS = ["north", "east", "south", "west", "claim", "pickup"]
 class Environment:
 
     def __init__(self, board_size: int, start_pos: list[int], 
-                 fixed_beacon_pos: list[int], max_actions: int, env_type: EnvType) -> None:
+                 fixed_goal_pos: list[int], max_actions: int, env_type: EnvType) -> None:
         self.board_size = board_size
         self.start_pos = start_pos
-        self.fixed_beacon_pos = fixed_beacon_pos
+        self.fixed_goal_pos = fixed_goal_pos
         self.max_actions = max_actions
         self.env_type: EnvType = env_type
 
         #set up the environment
         self.reset()
 
-    def _reset_agent_pos(self):
-        return self.start_pos.copy()
+    def reset(self):
+        # update the current environment so it reflects a reset
+        self.agent_pos= self.start_pos.copy()
+        self.action_count = 0
+        self.goal_pos = self._generate_rand_coords(self.board_size)
+        self.immed_reward = 0
+        self.total_reward = 0
+        self.episode_ended = False
+        if self.env_type=="pickup-and-deliver": 
+            self.package_pos=self._generate_rand_coords(self.board_size)
+        else: self.package_pos=[-1,-1]
+        return self
 
-    def spawn_beacon(self, board_size):
+    def agent_action(self, action):
+        action = action.lower().strip()
+        if action not in VALID_ACTIONS:
+            raise TypeError(f"Not a valid arg. 'action' must be in:{[action for action in VALID_ACTIONS]}")
+        
+        if self.episode_ended or self._max_actions_exceeded(): 
+            self.immed_reward=0
+            return (False, self.immed_reward)
+
+        self.action_count+=1
+        immed_reward=-0.01
+
+        if self._is_last_move():
+            self.episode_ended = True
+        
+        '''
+        if action=="pickup":
+            if self.env_type!="pickup-and-deliver":
+                continue
+        '''
+
+        if action=="claim":
+            claim_success, claim_reward = self._claim_goal()
+            immed_reward += claim_reward
+            if claim_success:
+                self.episode_ended=True
+
+        else:
+            #  move positions and then fix if crossed boundary
+            old_pos = self.agent_pos
+            new_pos = self._move_in_dir(action)
+            self.agent_pos = self._make_action_legal(old_pos, new_pos)
+
+        self.immed_reward = immed_reward
+        self.total_reward += self.immed_reward
+        return (True, self.immed_reward)
+
+    def agent_observation(self):
+        '''
+        all the coordinates, agent_x,y;goal_x,y, etc. are normalized [0,1]
+        '''
+        agent_x, agent_y = self._normalize_position(self.agent_pos)
+        goal_x, goal_y = self._normalize_position(self.goal_pos)
+        package_x, package_y = self._normalize_position(self.package_pos)
+        remaining_time = self._get_remaining_time()
+        observation = {
+            "agent_x": agent_x, 
+            "agent_y": agent_y, 
+            "goal_x": goal_x, #goal=beacon or delivery destination depending on task mode
+            "goal_y": goal_y, 
+            "package_x": package_x, #package location in pickup+delivery task
+            "package_y": package_y,
+            "carrying_package": self._is_carrying_package(), #check if agent picked up the package  
+            "package_active": self._get_package_mask(self.env_type), #mask that determines whether the agent should consider the package co-ords in decision making
+            "task_mode": self._encode_task_mode(self.env_type),
+            "remaining_time": remaining_time
+        }
+        return observation
+    
+    def _generate_rand_coords(self, board_size):
         '''
         this function would use a uniform distribution to generate a beacon randomly 
         anywhere
         '''
         if self.env_type=="genuine-fixed":
-            return self.fixed_beacon_pos
+            return self.fixed_goal_pos.copy()
         
         x_dim = random.randint(0,board_size-1)
         y_dim = random.randint (0,board_size-1)
-        new_beacon_pos = [x_dim, y_dim]
+        new_goal_pos = [x_dim, y_dim]
 
         # the beacon's distribution must be same for both S & E-variable agents.
-        if new_beacon_pos==[3,0]:
-            new_beacon_pos = self.spawn_beacon(self.board_size)
-        return new_beacon_pos
-    
-    def reset(self):
-        # update the current environment so it reflects a reset
-        self.agent_pos: list[int] = self._reset_agent_pos()
-        self.action_count = 0
-        self.beacon_pos = self.spawn_beacon(self.board_size)
-        self.curr_reward = 0
-        self.episode_ended = False
-        return self
+        if new_goal_pos==self.fixed_goal_pos:
+            new_goal_pos = self._generate_rand_coords(self.board_size)
+        return new_goal_pos
 
-    def _make_legal(self, old, new):
+    def _make_action_legal(self, old, new):
         x_in_range = new[0] in range(0, self.board_size)
         y_in_range = new[1] in range(0, self.board_size)
 
@@ -61,65 +121,62 @@ class Environment:
     def _is_last_move(self):
         return self.action_count==self.max_actions
 
-    def _claim_beacon(self):
-        if self.agent_pos==self.beacon_pos:
-            self.curr_reward+=1
-            return True
+    def _claim_goal(self):
+        if self.agent_pos==self.goal_pos:
+            claim_reward=1
+            return (True, claim_reward)
         else:
-            self.curr_reward-=0.02
-            return False
+            claim_reward=-0.02
+            return (False, claim_reward)
+
+    def _move_in_dir(self, dir):
+        new_x, new_y = self.agent_pos
         
-    def agent_action(self, action):
-        if self.episode_ended: return False
-        action = action.lower().strip()
-        if action not in VALID_ACTIONS:
-            raise TypeError(f"Not a valid arg. 'action' must be in:{[action for action in VALID_ACTIONS]}")
-        if self._max_actions_exceeded():
-            return False
-        
-        self.action_count+=1
-        self.curr_reward -= 0.01
-        if self._is_last_move():
-            self.episode_ended = True
+        if dir=="east":
+            new_x += 1
+        if dir=="west":
+            new_x -= 1
+        if dir=="north":
+            new_y += 1
+        if dir=="south":
+            new_y  -= 1
 
-        if action=="pickup":
-            if self.env_type!="pickup-and-deliver":
-                return True
+        new_pos = [new_x, new_y]
+        return new_pos
 
-        if action=="claim":
-            if self._claim_beacon():
-                self.episode_ended=True
+    def _normalize_position(self, position: list[int]):
+        return [(x/(self.board_size-1)) if x>=0 else x for x in position]
 
-        else:
-            #  move positions and then fix if crossed boundary
-                    old_pos = self.agent_pos
-                    new_x, new_y = self.agent_pos
-                    
-                    if action=="east":
-                        new_x += 1
-                    if action=="west":
-                        new_x -= 1
-                    if action=="north":
-                        new_y += 1
-                    if action=="south":
-                        new_y  -= 1
-            
-                    new_pos = [new_x, new_y]
-                    self.agent_pos = self._make_legal(old_pos, new_pos)
-            
-        return True
+    def _get_remaining_time(self):
+        return (1-self.action_count/self.max_actions)
 
+    def _encode_task_mode(self, task_mode):
+        task_mode = task_mode.lower().strip()
+        encoding = {
+            "hacky-variable": 0,
+            "genuine-fixed": 0,
+            "genuine-variable": 0,
+            "pickup-and-deliver":1
+        }
+        return encoding[task_mode]
+
+    def _get_package_mask(self, env_type):
+        env_type = env_type.lower().strip()
+        if env_type=="pickup-and-deliver": return 1
+        return 0
+
+    def _is_carrying_package(self):
+        #for now, we leave the package pickup detection logic 
+        if self.env_type=="pickup-and-deliver":
+            return 0
+        return 0
+
+#----------------------------------
 def main():
-    agent = Environment(7, [3,3], [3,0], 30, "genuine-fixed")
-    for i in range(0,3):
-        agent.agent_action("South")
-        print(f"Step {i+1}: {agent.curr_reward}")
-
-    agent.agent_action("claim")
-    print(f"final pos: {agent.agent_pos}")
-    print(f"claiming reward...")
-    print(agent.curr_reward)
-    return 1
+    env = Environment(7, [3, 3], [3, 0], 30, "genuine-fixed")
+    print(f"Observation 1: {env.agent_observation()}\n-------")
+    env.agent_action("south")
+    print(f"Observation 2: {env.agent_observation()}\n-------")
 
 if __name__=="__main__":
     main()
