@@ -1,4 +1,5 @@
 import pygame
+from numpy.random import default_rng
 
 from environment import Environment
 
@@ -34,7 +35,7 @@ def cell_center(position):
             BOARD_Y + (BOARD_SIZE - 1 - y) * CELL + CELL // 2)
 
 
-def draw(surface, env, last_action, fonts, path):
+def draw(surface, env, last_action, last_reward, fonts, path):
     title, heading, body, small = fonts
     surface.fill(BACKGROUND)
     text(surface, small, "REWARD HACKING  /  STAGE 1", BLUE, (48, 31))
@@ -71,7 +72,7 @@ def draw(surface, env, last_action, fonts, path):
     pygame.draw.rect(surface, "#ffffff", panel, border_radius=16)
     text(surface, heading, "Episode", INK, (557, 168))
     if env.episode_ended:
-        status = "Completed" if last_action == "claim" and env.immed_reward > 0 else "Time limit reached"
+        status = "Completed" if last_action == "claim" and last_reward > 0 else "Time limit reached"
         status_color = "#247b65" if status == "Completed" else "#b36d32"
     else:
         status, status_color = "In progress", BLUE
@@ -80,7 +81,7 @@ def draw(surface, env, last_action, fonts, path):
     metrics = [
         ("ACTIONS", f"{env.action_count} / {env.max_actions}"),
         ("LAST ACTION", last_action.title() if last_action else "—"),
-        ("LAST REWARD", f"{env.immed_reward:+.2f}"),
+        ("LAST REWARD", f"{last_reward:+.2f}"),
         ("EPISODE RETURN", f"{env.total_reward:+.2f}"),
     ]
     for index, (label, value) in enumerate(metrics):
@@ -106,10 +107,12 @@ def main():
     pygame.display.set_caption("Beacon navigation")
     fonts = (pygame.font.SysFont(None, 38), pygame.font.SysFont(None, 27),
              pygame.font.SysFont(None, 21), pygame.font.SysFont(None, 17))
-    env = Environment(BOARD_SIZE, [3, 3], [3, 0], 30, "genuine-fixed")
+    rng = default_rng()
+    env = Environment(BOARD_SIZE, [3, 3], [3, 0], 30, "genuine-fixed", rng)
     actions = {pygame.K_UP: "north", pygame.K_DOWN: "south", pygame.K_LEFT: "west",
                pygame.K_RIGHT: "east", pygame.K_c: "claim", pygame.K_p: "pickup"}
     last_action = None
+    last_reward = 0.0
     path = [tuple(env.agent_pos)]
     clock = pygame.time.Clock()
     running = True
@@ -119,18 +122,20 @@ def main():
                 running = False
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_r:
-                    env.reset()
+                    env.reset(rng)
                     last_action = None
+                    last_reward = 0.0
                     path = [tuple(env.agent_pos)]
                 elif event.key in actions:
                     action = actions[event.key]
-                    accepted, _ = env.agent_action(action)
+                    accepted, reward, _, _, _, _ = env.agent_action(action)
                     if accepted:
                         last_action = action
+                        last_reward = reward
                         position = tuple(env.agent_pos)
                         if position != path[-1]:
                             path.append(position)
-        draw(surface, env, last_action, fonts, path)
+        draw(surface, env, last_action, last_reward, fonts, path)
         pygame.display.flip()
         clock.tick(60)
     pygame.quit()

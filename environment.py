@@ -1,13 +1,14 @@
 import random
 from typing import Literal
+from numpy.random import Generator, PCG64 
 
 EnvType = Literal["hacky-variable", "genuine-fixed", "genuine-variable", "pickup-and-deliver"]
 VALID_ACTIONS = ["north", "east", "south", "west", "claim", "pickup"]
 
 class Environment:
 
-    def __init__(self, board_size: int, start_pos: list[int], 
-                 fixed_goal_pos: list[int], max_actions: int, env_type: EnvType) -> None:
+    def __init__(self, board_size: int, start_pos: list[int], fixed_goal_pos: list[int], 
+                 max_actions: int, env_type: EnvType, rng : Generator) -> None:
         self.board_size = board_size
         self.start_pos = start_pos
         self.fixed_goal_pos = fixed_goal_pos
@@ -15,57 +16,80 @@ class Environment:
         self.env_type: EnvType = env_type
 
         #set up the environment
-        self.reset()
+        self.reset(rng)
 
-    def reset(self):
+    def reset(self,rng):
         # update the current environment so it reflects a reset
         self.agent_pos= self.start_pos.copy()
         self.action_count = 0
-        self.goal_pos = self._generate_rand_coords(self.board_size)
-        self.immed_reward = 0
+        self.np_random = rng
+        self.goal_pos = self._generate_random_coords(self.board_size)
         self.total_reward = 0
         self.episode_ended = False
         if self.env_type=="pickup-and-deliver": 
-            self.package_pos=self._generate_rand_coords(self.board_size)
+            self.package_pos=self._generate_random_coords(self.board_size)
         else: self.package_pos=[-1,-1]
         return self
 
     def agent_action(self, action):
+        '''
+        - act_completed : bool = whether the action was valid and succeeded or not
+        - reward : int = immediate reward, r_t
+        - obs : dict = agent's observation post-action, s_t+1
+        - terminated : bool = whether the episode was ended (goal completed or time-limit up)
+        - truncated : bool = whether the episode was ended from external reasons
+        - info : dict = any extra information useful for logging, etc.
+        '''
         action = action.lower().strip()
         if action not in VALID_ACTIONS:
             raise TypeError(f"Not a valid arg. 'action' must be in:{[action for action in VALID_ACTIONS]}")
-        
-        if self.episode_ended or self._max_actions_exceeded(): 
-            self.immed_reward=0
-            return (False, self.immed_reward)
 
-        self.action_count+=1
-        immed_reward=-0.01
+        act_completed = True
+        immed_reward=0
+        terminated = False
+        info = {}
 
-        if self._is_last_move():
-            self.episode_ended = True
-        
-        '''
-        if action=="pickup":
-            if self.env_type!="pickup-and-deliver":
-                continue
-        '''
-
-        if action=="claim":
-            claim_success, claim_reward = self._claim_goal()
-            immed_reward += claim_reward
-            if claim_success:
-                self.episode_ended=True
-
+        if self.episode_ended: 
+            act_completed = False
+            terminated = True
+            info['termination_reason'] = "episode ended"
+        elif self._max_actions_exceeded():
+            act_completed = False
+            terminated = True
+            info['termination_reason'] = "move limit exceeded"
         else:
-            #  move positions and then fix if crossed boundary
-            old_pos = self.agent_pos
-            new_pos = self._move_in_dir(action)
-            self.agent_pos = self._make_action_legal(old_pos, new_pos)
+            self.action_count += 1
+            immed_reward -= 0.01
 
-        self.immed_reward = immed_reward
-        self.total_reward += self.immed_reward
-        return (True, self.immed_reward)
+            if self._is_last_move():
+                terminated = True
+                info["termination_reason"] = "move limit reached"
+            
+            '''
+            if action=="pickup":
+                if self.env_type!="pickup-and-deliver":
+                    continue
+            '''
+
+            if action=="claim":
+                claim_succeeded, claim_reward = self._claim_goal()
+                immed_reward += claim_reward
+                if claim_succeeded:
+                    terminated=True
+                    info["termination_reason"] = "claim successful"
+
+            else:
+                #  move positions and then fix if crossed boundary
+                old_pos = self.agent_pos
+                new_pos = self._move_in_dir(action)
+                self.agent_pos = self._make_action_legal(old_pos, new_pos)
+
+        self.total_reward += immed_reward
+        self.episode_ended = terminated
+        
+        obs = self.agent_observation()
+        truncated = False 
+        return (act_completed, immed_reward, obs, terminated, truncated, info)
 
     def agent_observation(self):
         '''
@@ -89,7 +113,7 @@ class Environment:
         }
         return observation
     
-    def _generate_rand_coords(self, board_size):
+    def _generate_random_coords(self, board_size):
         '''
         this function would use a uniform distribution to generate a beacon randomly 
         anywhere
@@ -97,13 +121,11 @@ class Environment:
         if self.env_type=="genuine-fixed":
             return self.fixed_goal_pos.copy()
         
-        x_dim = random.randint(0,board_size-1)
-        y_dim = random.randint (0,board_size-1)
-        new_goal_pos = [x_dim, y_dim]
+        new_goal_pos = self.np_random.integers(0,board_size, size=2).tolist()
 
         # the beacon's distribution must be same for both S & E-variable agents.
         if new_goal_pos==self.fixed_goal_pos:
-            new_goal_pos = self._generate_rand_coords(self.board_size)
+            new_goal_pos = self._generate_random_coords(self.board_size)
         return new_goal_pos
 
     def _make_action_legal(self, old, new):
@@ -173,7 +195,7 @@ class Environment:
 
 #----------------------------------
 def main():
-    env = Environment(7, [3, 3], [3, 0], 30, "genuine-fixed")
+    env = Environment(7, [3, 3], [3, 0], 30, "genuine-fixed", Generator(PCG64()))
     print(f"Observation 1: {env.agent_observation()}\n-------")
     env.agent_action("south")
     print(f"Observation 2: {env.agent_observation()}\n-------")
