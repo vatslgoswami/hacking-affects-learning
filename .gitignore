@@ -1,3 +1,6 @@
 docs/
+runs/
+
+#others 
 .venv
 __pycache__

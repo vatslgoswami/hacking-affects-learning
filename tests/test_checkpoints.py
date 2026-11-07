@@ -10,7 +10,7 @@ from stable_baselines3 import PPO
 
 from gym_adapter import GridWorld
 from evals import evaluate_model
-from policy_architecture import SharedTrunk
+from mlp_architecture import SharedTrunk
 from train import train_and_eval_loop
 from utils import configure_training_logger, load_checkpoint
 
@@ -34,6 +34,15 @@ class TestCheckpoints(unittest.TestCase):
             self.assertEqual(load_checkpoint(Path(directory) / 'step_24.zip')._n_updates, 3)
             for step in (0, 16, 24):
                 self.assertTrue((Path(directory) / f'step_{step}.json').is_file())
+                summary = json.loads((Path(directory) / f'step_{step}.json').read_text())
+                record = json.loads((Path(directory) / f'episodes_{step}.json').read_text())
+                self.assertEqual(record['n_timesteps'], step)
+                self.assertEqual(record['eval_seed'], summary['eval_seed'])
+                self.assertEqual(len(record['episodes']), summary['eval_episode_count'])
+                episode = record['episodes'][0]
+                self.assertEqual(summary['success_rate'], float(episode['genuine_success']))
+                self.assertAlmostEqual(summary['average_return'], episode['total_return'])
+                self.assertEqual(summary['average_episode_length'], episode['action_count'])
             with (Path(directory) / 'progress.csv').open(newline='') as file:
                 rows = list(csv.DictReader(file))
             updates = [row for row in rows if row.get('train/update_timesteps')]
@@ -66,8 +75,9 @@ class TestCheckpoints(unittest.TestCase):
             for checkpoint, step in ((initial, 0), (final, 16)):
                 summary = json.loads((Path(directory) / f'step_{step}.json').read_text())
                 saved_model = load_checkpoint(checkpoint)
-                metrics = evaluate_model(saved_model, eval_env, 'genuine-fixed',
-                                         num_episodes=1, eval_seed=100)
+                metrics, episodes = evaluate_model(saved_model, eval_env, 'genuine-fixed',
+                                                   num_episodes=1, eval_seed=100)
+                self.assertEqual(episodes, [])
                 self.assertEqual(summary['n_timesteps'], step)
                 self.assertEqual(summary['eval_episode_count'], 1)
                 self.assertEqual(summary['eval_seed'], 100)

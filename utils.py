@@ -48,6 +48,19 @@ def save_evaluation_summary(evals_dir, n_timesteps, metrics, eval_episode_count,
         json.dump(summary, file, indent=2)
     return path
 
+def save_evaluation_episodes(evals_dir, n_timesteps, episodes, eval_seed, is_eval_greedy):
+    record = {
+        'n_timesteps': n_timesteps,
+        'eval_episode_count': len(episodes),
+        'eval_seed': eval_seed,
+        'eval_action_sampler_choice': 'greedy' if is_eval_greedy else 'stochastic',
+        'episodes': episodes,
+    }
+    path = Path(evals_dir) / f'episodes_{n_timesteps}.json'
+    with path.open('x') as file:
+        json.dump(record, file, indent=2)
+    return path
+
 def save_run_config(RUN_DIR, settings, run_id):
     config = {
         'run_id': run_id,

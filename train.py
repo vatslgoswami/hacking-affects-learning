@@ -5,7 +5,7 @@ import time
 from evals import evaluate_model
 from policy_architecture import SharedTrunk
 from plots import save_evaluation_plot, save_training_plots
-from utils import configure_training_logger, create_run_folder, save_checkpoint, save_evaluation_summary, save_run_config
+from utils import configure_training_logger, create_run_folder, save_checkpoint, save_evaluation_episodes, save_evaluation_summary, save_run_config
 
 class EvaluationCheckpointCallback(BaseCallback):
     def __init__(self, test_env, eval_seed, checkpoints_dir, evals_dir,
@@ -24,10 +24,12 @@ class EvaluationCheckpointCallback(BaseCallback):
     def _save_and_evaluate(self):
         steps = self.model.num_timesteps
         save_checkpoint(self.model, self.checkpoints_dir)
-        metrics = evaluate_model(self.model, self.test_env, "genuine-fixed",
-                                 self.num_eval_episodes, self.eval_seed, self.is_eval_greedy)
+        metrics, episodes = evaluate_model(self.model, self.test_env, "genuine-fixed",
+                                 self.num_eval_episodes, self.eval_seed, self.is_eval_greedy,
+                                 record_episodes=True)
         save_evaluation_summary(self.evals_dir, steps, metrics, self.num_eval_episodes,
                                 self.eval_seed, self.is_eval_greedy)
+        save_evaluation_episodes(self.evals_dir, steps, episodes, self.eval_seed, self.is_eval_greedy)
         self.checkpoint_schedule.append(steps)
         success_rate, avg_return, episode_length = metrics
         print(f"Checkpoint at {steps} transitions:\nSuccess Rate: {success_rate}\n"
@@ -130,7 +132,7 @@ if __name__=="__main__":
     logger = configure_training_logger(model, run_dir)
     #run the train_eval_loop
     try:
-        model, train_eval_loop_settings = train_and_eval_loop(model, test_env, 50000, eval_seed, checkpoints_dir, evals_dir)
+        model, train_eval_loop_settings = train_and_eval_loop(model, test_env, 20000, eval_seed, checkpoints_dir, evals_dir)
         settings = get_run_settings(model, train_env, train_eval_loop_settings)
         save_run_config(run_dir, settings, run_id)
         print(f'Saved evaluation plot: {save_evaluation_plot(run_dir)}')

@@ -1,3 +1,8 @@
+import argparse
+import json
+from pathlib import Path
+from types import SimpleNamespace
+
 import pygame
 from numpy.random import default_rng
 
@@ -35,12 +40,15 @@ def cell_center(position):
             BOARD_Y + (BOARD_SIZE - 1 - y) * CELL + CELL // 2)
 
 
-def draw(surface, env, last_action, last_reward, fonts, path):
+def draw(surface, env, last_action, last_reward, fonts, path, replay=None):
     title, heading, body, small = fonts
     surface.fill(BACKGROUND)
     text(surface, small, "REWARD HACKING  /  STAGE 1", BLUE, (48, 31))
     text(surface, title, "Beacon navigation", INK, (48, 53))
-    text(surface, body, "Explore the environment, one action at a time.", MUTED, (49, 100))
+    subtitle = (f"Saved evaluation  ·  Checkpoint {replay.checkpoint:,} transitions  "
+                f"({replay.checkpoint_index + 1}/{len(replay.records)})"
+                if replay else "Explore the environment, one action at a time.")
+    text(surface, body, subtitle, MUTED, (49, 100))
 
     board_rect = pygame.Rect(BOARD_X - 8, BOARD_Y - 8, CELL * BOARD_SIZE + 16, CELL * BOARD_SIZE + 16)
     pygame.draw.rect(surface, "#e6ebf4", board_rect, border_radius=14)
@@ -68,10 +76,31 @@ def draw(surface, env, last_action, last_reward, fonts, path):
     agent_label = heading.render("A", True, pygame.Color("#ffffff"))
     surface.blit(agent_label, agent_label.get_rect(center=agent_center))
 
+    if replay and replay.finished:
+        banner = pygame.Rect(BOARD_X + 16, BOARD_Y + 14, CELL * BOARD_SIZE - 32, 53)
+        pygame.draw.rect(surface, '#17233d', banner, border_radius=10)
+        text(surface, body, f"EPISODE FINISHED  ·  {replay.outcome.upper()}", '#ffffff',
+             (banner.x + 15, banner.y + 8))
+        if replay.play_all and replay.episode_index + 1 < len(replay.episodes):
+            detail = 'Paused' if replay.paused else 'Next episode shortly'
+        elif replay.episode_index + 1 == len(replay.episodes) and replay.checkpoint_index + 1 < len(replay.records):
+            detail = 'Paused' if replay.paused else ('Next checkpoint shortly' if replay.play_all else 'Use ] for next checkpoint')
+        elif replay.episode_index + 1 == len(replay.episodes):
+            detail = 'Last episode of last checkpoint'
+        else:
+            detail = 'Use Right for the next episode'
+        text(surface, small, detail, '#c5cee1', (banner.x + 15, banner.y + 31))
+
     panel = pygame.Rect(535, 145, 315, 460)
     pygame.draw.rect(surface, "#ffffff", panel, border_radius=16)
-    text(surface, heading, "Episode", INK, (557, 168))
-    if env.episode_ended:
+    episode_title = f"Episode {replay.episode_index + 1} / {len(replay.episodes)}" if replay else "Episode"
+    text(surface, heading, episode_title, INK, (557, 168))
+    if replay and replay.finished:
+        status = replay.outcome
+        status_color = "#247b65" if replay.episode['genuine_success'] else "#b36d32"
+    elif replay:
+        status, status_color = ("Paused", MUTED) if replay.paused else ("Playing", BLUE)
+    elif env.episode_ended:
         status = "Completed" if last_action == "claim" and last_reward > 0 else "Time limit reached"
         status_color = "#247b65" if status == "Completed" else "#b36d32"
     else:
@@ -91,9 +120,15 @@ def draw(surface, env, last_action, last_reward, fonts, path):
 
     pygame.draw.line(surface, "#e8ecf3", (557, 474), (827, 474))
     text(surface, small, "CONTROLS", MUTED, (557, 492))
-    text(surface, body, "Arrow keys  ·  Move", INK, (557, 516))
-    text(surface, body, "C  ·  Claim     P  ·  Pickup", INK, (557, 542))
-    text(surface, body, "R  ·  Reset      Esc  ·  Quit", INK, (557, 568))
+    if replay:
+        text(surface, body, f"Space  ·  Pause    A  ·  Play all: {'on' if replay.play_all else 'off'}", INK, (557, 510))
+        text(surface, body, "Left / Right  ·  Previous / next episode", INK, (557, 533))
+        text(surface, body, "[ / ]  ·  Previous / next checkpoint", INK, (557, 556))
+        text(surface, body, f"Up / Down  ·  Speed: {replay.speed:g}x    R  ·  Restart", INK, (557, 579))
+    else:
+        text(surface, body, "Arrow keys  ·  Move", INK, (557, 516))
+        text(surface, body, "C  ·  Claim     P  ·  Pickup", INK, (557, 542))
+        text(surface, body, "R  ·  Reset      Esc  ·  Quit", INK, (557, 568))
 
     smooth_circle(surface, BLUE, (53, 621), 4)
     text(surface, small, "AGENT", BLUE, (64, 615))
@@ -101,7 +136,148 @@ def draw(surface, env, last_action, last_reward, fonts, path):
     text(surface, small, "BEACON", ORANGE, (166, 615))
 
 
+class ReplaySession:
+    speeds = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 10.0)
+    end_pause_seconds = 1.5
+
+    def __init__(self, record, episode_index=0, max_actions=None):
+        self.records = record if isinstance(record, list) else [record]
+        if not self.records or any(not item['episodes'] for item in self.records):
+            raise ValueError('A selected checkpoint has no recorded episodes')
+        if any(episode['board_size'] != BOARD_SIZE for item in self.records for episode in item['episodes']):
+            raise ValueError(f'This visualizer currently supports {BOARD_SIZE}×{BOARD_SIZE} boards only')
+        if not 0 <= episode_index < len(self.records[0]['episodes']):
+            raise ValueError(f"Episode must be between 1 and {len(self.records[0]['episodes'])}")
+        self.max_actions = max_actions if max_actions is not None else '?'
+        self.speed_index = 2
+        self.paused = False
+        self.play_all = True
+        self.select_checkpoint(0, episode_index)
+
+    @property
+    def speed(self):
+        return self.speeds[self.speed_index]
+
+    @property
+    def episode(self):
+        return self.episodes[self.episode_index]
+
+    @property
+    def finished(self):
+        return self.step_index >= len(self.episode['steps'])
+
+    @property
+    def outcome(self):
+        if self.episode['genuine_success']:
+            return 'Success'
+        if self.episode['truncated']:
+            return 'Episode truncated'
+        if self.episode['steps'] and self.episode['steps'][-1]['info'].get('move_limit_reached'):
+            return 'Time limit reached'
+        return 'Episode ended'
+
+    def restart(self):
+        initial = self.episode['initial_state']
+        self.env = SimpleNamespace(agent_pos=list(initial['agent_pos']),
+                                   goal_pos=list(initial['goal_pos']),
+                                   action_count=0, max_actions=self.max_actions,
+                                   total_reward=0.0, episode_ended=False)
+        self.path = [tuple(self.env.agent_pos)]
+        self.last_action = None
+        self.last_reward = 0.0
+        self.step_index = 0
+        self.elapsed = 0.0
+
+    def select_episode(self, index):
+        if 0 <= index < len(self.episodes):
+            self.episode_index = index
+            self.restart()
+
+    def select_checkpoint(self, index, episode_index=0):
+        if 0 <= index < len(self.records):
+            self.checkpoint_index = index
+            self.checkpoint = self.records[index]['n_timesteps']
+            self.episodes = self.records[index]['episodes']
+            self.episode_index = episode_index
+            self.restart()
+
+    def advance(self):
+        if self.finished:
+            return
+        step = self.episode['steps'][self.step_index]
+        self.env.agent_pos = list(step['state']['agent_pos'])
+        self.env.goal_pos = list(step['state']['goal_pos'])
+        self.env.action_count += 1
+        self.env.total_reward += step['reward']
+        self.env.episode_ended = step['terminated'] or step['truncated']
+        self.last_action = step['action_name']
+        self.last_reward = step['reward']
+        self.step_index += 1
+        position = tuple(self.env.agent_pos)
+        if position != self.path[-1]:
+            self.path.append(position)
+
+    def update(self, elapsed_seconds):
+        if self.paused:
+            return
+        self.elapsed += elapsed_seconds
+        if self.finished:
+            if self.play_all and self.elapsed >= self.end_pause_seconds:
+                if self.episode_index + 1 < len(self.episodes):
+                    self.select_episode(self.episode_index + 1)
+                elif self.checkpoint_index + 1 < len(self.records):
+                    self.select_checkpoint(self.checkpoint_index + 1)
+                else:
+                    self.paused = True
+            return
+        if self.elapsed >= 0.6 / self.speed:
+            self.elapsed = 0.0
+            self.advance()
+
+
+def load_replays(run_dir, checkpoints, episode_index=0):
+    run_dir = Path(run_dir)
+    if not checkpoints:
+        raise ValueError('No saved episode checkpoints found')
+    if len(set(checkpoints)) != len(checkpoints):
+        raise ValueError('Each checkpoint may only be selected once')
+    records = []
+    for checkpoint in checkpoints:
+        path = run_dir / 'evaluations' / f'episodes_{checkpoint}.json'
+        with path.open() as file:
+            record = json.load(file)
+        if record['n_timesteps'] != checkpoint:
+            raise ValueError('Checkpoint in the episode file does not match the requested checkpoint')
+        records.append(record)
+    config_path = run_dir / 'config.json'
+    config = json.loads(config_path.read_text()) if config_path.exists() else {}
+    return ReplaySession(records, episode_index, config.get('max_actions'))
+
+
+def load_replay(run_dir, checkpoint, episode_index=0):
+    return load_replays(run_dir, [checkpoint], episode_index)
+
+
 def main():
+    parser = argparse.ArgumentParser(description='Play the board manually or replay a saved evaluation.')
+    parser.add_argument('--run', type=Path, help='Run directory containing saved evaluations')
+    checkpoint_choice = parser.add_mutually_exclusive_group()
+    checkpoint_choice.add_argument('--checkpoint', type=int, nargs='+', help='One or more checkpoint transition counts')
+    checkpoint_choice.add_argument('--all-checkpoints', action='store_true', help='Replay all saved checkpoints in order')
+    parser.add_argument('--episode', type=int, default=1, help='Starting episode number (default: 1)')
+    args = parser.parse_args()
+    if (args.run is None) != (args.checkpoint is None and not args.all_checkpoints):
+        parser.error('--run requires --checkpoint or --all-checkpoints, and vice versa')
+    try:
+        checkpoints = args.checkpoint
+        if args.all_checkpoints:
+            checkpoints = sorted(int(path.stem.removeprefix('episodes_'))
+                                 for path in (args.run / 'evaluations').glob('episodes_*.json')
+                                 if path.stem.removeprefix('episodes_').isdigit())
+        replay = load_replays(args.run, checkpoints, args.episode - 1) if args.run is not None else None
+    except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
+        parser.error(str(error))
+
     pygame.init()
     surface = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Beacon navigation")
@@ -117,11 +293,31 @@ def main():
     clock = pygame.time.Clock()
     running = True
     while running:
+        elapsed_seconds = clock.tick(60) / 1000
         for event in pygame.event.get():
             if event.type == pygame.QUIT or (event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE):
                 running = False
             elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_r:
+                if replay:
+                    if event.key == pygame.K_SPACE:
+                        replay.paused = not replay.paused
+                    elif event.key == pygame.K_LEFT:
+                        replay.select_episode(replay.episode_index - 1)
+                    elif event.key == pygame.K_RIGHT:
+                        replay.select_episode(replay.episode_index + 1)
+                    elif event.key == pygame.K_LEFTBRACKET:
+                        replay.select_checkpoint(replay.checkpoint_index - 1)
+                    elif event.key == pygame.K_RIGHTBRACKET:
+                        replay.select_checkpoint(replay.checkpoint_index + 1)
+                    elif event.key == pygame.K_UP:
+                        replay.speed_index = min(replay.speed_index + 1, len(replay.speeds) - 1)
+                    elif event.key == pygame.K_DOWN:
+                        replay.speed_index = max(replay.speed_index - 1, 0)
+                    elif event.key == pygame.K_a:
+                        replay.play_all = not replay.play_all
+                    elif event.key == pygame.K_r:
+                        replay.restart()
+                elif event.key == pygame.K_r:
                     env.reset(rng)
                     last_action = None
                     last_reward = 0.0
@@ -135,9 +331,12 @@ def main():
                         position = tuple(env.agent_pos)
                         if position != path[-1]:
                             path.append(position)
-        draw(surface, env, last_action, last_reward, fonts, path)
+        if replay:
+            replay.update(elapsed_seconds)
+            draw(surface, replay.env, replay.last_action, replay.last_reward, fonts, replay.path, replay)
+        else:
+            draw(surface, env, last_action, last_reward, fonts, path)
         pygame.display.flip()
-        clock.tick(60)
     pygame.quit()
 
 
