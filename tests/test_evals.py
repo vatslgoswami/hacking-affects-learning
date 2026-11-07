@@ -15,7 +15,7 @@ class TestEvaluation(unittest.TestCase):
             model = PPO("MlpPolicy", train_env, seed=1, device="cpu")
 
             before = torch.get_rng_state()
-            evaluate_model(model, eval_env, "genuine-fixed", num_episodes=2, eval_act_seed=100)
+            evaluate_model(model, eval_env, "genuine-fixed", num_episodes=2, eval_seed=100)
             after = torch.get_rng_state()
 
             self.assertTrue(torch.equal(before, after))
