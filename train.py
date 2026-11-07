@@ -1,6 +1,7 @@
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback
 from gym_adapter import GridWorld
+from goal_split import development_goal_split
 import time
 from evals import evaluate_model
 from mlp_architecture import SharedTrunk
@@ -40,8 +41,9 @@ class EvaluationCheckpointCallback(BaseCallback):
         if self.thresholds is None:
             raise ValueError('competence thresholds are not defined for this environment')
         success_threshold, extra_limit = self.thresholds
-        extra_actions = metrics['average_extra_actions']
-        return (metrics['success_rate'] >= success_threshold
+        extra_actions = metrics.get('seen_average_extra_actions', metrics['average_extra_actions'])
+        success_rate = metrics.get('seen_success_rate', metrics['success_rate'])
+        return (success_rate >= success_threshold
                 and extra_actions is not None and extra_actions <= extra_limit)
 
     def _check_competence(self, steps, metrics):
@@ -105,10 +107,18 @@ class EvaluationCheckpointCallback(BaseCallback):
         success_rate = metrics['success_rate']
         avg_return = metrics['average_return']
         episode_length = metrics['average_episode_length']
+        if competence['is_reliable_checkpoint']:
+            competence_status = f"confirmed at this evaluation ({steps:,} steps)"
+        elif competence['reliable_step'] is not None:
+            competence_status = f"previously confirmed at {competence['reliable_step']:,} steps"
+        elif competence['passes'] is None:
+            competence_status = 'not checked for this task'
+        else:
+            competence_status = 'not yet confirmed'
         print(f"Evaluation at {steps} transitions:\nSuccess Rate: {success_rate}\n"
               f"Avg Return: {avg_return}\nEpisode Length: {episode_length}\n"
               f"Extra actions among successes: {metrics['average_extra_actions']}\n"
-              f"Competence confirmed here: {competence['is_reliable_checkpoint']}\n======================")
+              f"Competence: {competence_status}\n======================")
 
     def _save_and_evaluate(self, final=False, initial=False):
         steps = self.model.num_timesteps
@@ -153,6 +163,9 @@ def train_and_eval_loop(model:PPO, test_env, training_budget,
                         confirmation_seed=11, confirmation_env_seed=12):
     if checkpoint_interval <= 0:
         raise ValueError("checkpoint_interval must be positive")
+    training_env = model.get_env()
+    if training_env is None or any(split != test_env.goal_split for split in training_env.get_attr('goal_split')):
+        raise ValueError('training and evaluation environments must use the same goal split')
     callback = EvaluationCheckpointCallback(test_env, eval_seed, checkpoints_dir, evals_dir,
                                             num_eval_episodes, is_eval_greedy, checkpoint_interval, eval_env_seed,
                                             confirmation_seed, confirmation_env_seed)
@@ -205,8 +218,10 @@ def get_run_settings(model:PPO, env:GridWorld, train_eval_loop_settings):
 if __name__=="__main__":
     model_seed = 3
     eval_seed = 100
-    train_env = GridWorld(7, [3,3], [3,0], 30, "genuine-fixed")
-    test_env = GridWorld(7, [3,3], [3,0], 30, "genuine-fixed") 
+    training_budget = 100_000
+    goal_split = development_goal_split()
+    train_env = GridWorld(7, [3,3], [3,0], 30, "genuine-variable", goal_split)
+    test_env = GridWorld(7, [3,3], [3,0], 30, "genuine-variable", goal_split)
 
     model = PPO(
         "MlpPolicy", 
@@ -221,13 +236,13 @@ if __name__=="__main__":
         }
     )
 
-    run_id = time.ctime()
+    run_id = f'{train_env.env_type}-{time.ctime()}'
     BASE_DIR = './runs'
     run_dir, checkpoints_dir, evals_dir, plots_dir = create_run_folder(BASE_DIR, run_id)
     logger = configure_training_logger(model, run_dir)
     #run the train_eval_loop
     try:
-        model, train_eval_loop_settings = train_and_eval_loop(model, test_env, 20000, eval_seed, checkpoints_dir, evals_dir)
+        model, train_eval_loop_settings = train_and_eval_loop(model, test_env, training_budget, eval_seed, checkpoints_dir, evals_dir)
         settings = get_run_settings(model, train_env, train_eval_loop_settings)
         save_run_config(run_dir, settings, run_id)
         print(f'Saved evaluation plot: {save_evaluation_plot(run_dir)}')

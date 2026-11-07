@@ -27,6 +27,20 @@ def make_episode(index, success):
 
 
 class TestReplay(unittest.TestCase):
+    def test_episode_pause_scales_with_playback_speed(self):
+        for speed_index in (1, 2, 6):
+            with self.subTest(speed=ReplaySession.speeds[speed_index]):
+                record = {'n_timesteps': 0, 'episodes': [make_episode(0, False), make_episode(1, True)]}
+                replay = ReplaySession(record, max_actions=30)
+                replay.speed_index = speed_index
+                replay.advance()
+                replay.advance()
+                pause = replay.end_pause_seconds / replay.speed
+                replay.update(pause * 0.9)
+                self.assertEqual(replay.episode_index, 0)
+                replay.update(pause * 0.2)
+                self.assertEqual(replay.episode_index, 1)
+
     def test_play_all_advances_across_checkpoints(self):
         records = [
             {'n_timesteps': 0, 'episodes': [make_episode(0, False)]},

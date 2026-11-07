@@ -26,8 +26,11 @@ def _shortest_successful_length(initial_state, env_type: EnvType):
     return distance(start, goal) + 1
 
 
-def _evaluate_episode(model, test_env, env_type, episode_index, is_eval_greedy, record_episodes, reset_seed=None):
-    obs, _ = test_env.reset(seed=reset_seed)
+def _evaluate_episode(model, test_env, env_type, episode_index, is_eval_greedy, record_episodes, reset_seed=None, goal=None):
+    if goal is None:
+        obs, _ = test_env.reset(seed=reset_seed)
+    else:
+        obs, _ = test_env.reset(seed=reset_seed, options={'goal_pos': goal})
     initial_state = _board_state(test_env)
     shortest_length = _shortest_successful_length(initial_state, env_type)
     episode_length = 0
@@ -107,15 +110,34 @@ def evaluate_model(model:BaseAlgorithm, test_env:GridWorld, env_type:EnvType, nu
 
     outcomes = []
     episodes = []
+    split = test_env.env.goal_split if env_type == 'genuine-variable' else None
+    if split is not None and num_episodes != 25:
+        raise ValueError('the development goal panel requires 25 evaluation episodes')
+    if split is not None and eval_env_seed is None:
+        raise ValueError('the development goal panel requires an evaluation environment seed')
+    panel = split.evaluation_panel(eval_env_seed) if split is not None else None
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(eval_seed)
         for episode_index in range(num_episodes):
             outcome, episode = _evaluate_episode(
                 model, test_env, env_type, episode_index, is_eval_greedy, record_episodes,
                 reset_seed=eval_env_seed if episode_index == 0 else None,
+                goal=panel[episode_index][0] if panel is not None else None,
             )
+            if panel is not None:
+                outcome['goal_group'] = panel[episode_index][1]
+                if episode is not None:
+                    episode['goal_group'] = panel[episode_index][1]
             outcomes.append(outcome)
             if episode is not None:
                 episodes.append(episode)
 
-    return _summarize_episodes(outcomes), episodes
+    metrics = _summarize_episodes(outcomes)
+    if panel is not None:
+        for group in ('seen', 'withheld'):
+            group_metrics = _summarize_episodes([outcome for outcome in outcomes if outcome['goal_group'] == group])
+            metrics[f'{group}_success_rate'] = group_metrics['success_rate']
+            metrics[f'{group}_average_extra_actions'] = group_metrics['average_extra_actions']
+            metrics[f'{group}_episode_count'] = len([outcome for outcome in outcomes if outcome['goal_group'] == group])
+        metrics['goal_panel'] = [{'goal': list(goal), 'group': group} for goal, group in panel]
+    return metrics, episodes

@@ -65,6 +65,23 @@ class TestEvaluationPlots(unittest.TestCase):
         finally:
             plt.close(figure)
 
+    def test_seen_and_withheld_success_curves_are_separate(self):
+        summaries = [
+            {'n_timesteps': step, 'success_rate': 0.6, 'seen_success_rate': 1.0,
+             'withheld_success_rate': 0.0, 'average_return': 0.3,
+             'average_episode_length': 12, 'eval_episode_count': 25, 'eval_seed': 100,
+             'eval_action_sampler_choice': 'stochastic'}
+            for step in (0, 2048)
+        ]
+        figure = create_evaluation_figure(summaries, 'test')
+        try:
+            lines = {line.get_label(): line for line in figure.axes[0].lines}
+            self.assertEqual(list(lines['Seen'].get_ydata()), [1.0, 1.0])
+            self.assertEqual(list(lines['Withheld'].get_ydata()), [0.0, 0.0])
+            self.assertEqual(list(lines['Overall'].get_ydata()), [0.6, 0.6])
+        finally:
+            plt.close(figure)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

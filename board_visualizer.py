@@ -2,6 +2,7 @@ import argparse
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 
 import pygame
 from numpy.random import default_rng
@@ -9,141 +10,16 @@ from numpy.random import default_rng
 from environment import Environment
 
 
-WIDTH, HEIGHT = 900, 650
-CELL = 64
-BOARD_X, BOARD_Y = 48, 145
-BOARD_SIZE = 7
-
-BACKGROUND = "#f5f7fb"
-INK = "#17233d"
-MUTED = "#6c7890"
-BLUE = "#526bf4"
-ORANGE = "#f39a4a"
-
-
-def text(surface, font, value, color, position):
-    surface.blit(font.render(value, True, pygame.Color(color)), position)
-
-
-def smooth_circle(surface, color, center, radius):
-    scale = 4
-    size = radius * 2 + 4
-    circle = pygame.Surface((size * scale, size * scale), pygame.SRCALPHA)
-    pygame.draw.circle(circle, pygame.Color(color), (size * scale // 2,) * 2, radius * scale)
-    circle = pygame.transform.smoothscale(circle, (size, size))
-    surface.blit(circle, circle.get_rect(center=center))
-
-
-def cell_center(position):
-    x, y = position
-    return (BOARD_X + x * CELL + CELL // 2,
-            BOARD_Y + (BOARD_SIZE - 1 - y) * CELL + CELL // 2)
-
-
-def draw(surface, env, last_action, last_reward, fonts, path, replay=None):
-    title, heading, body, small = fonts
-    surface.fill(BACKGROUND)
-    text(surface, small, "REWARD HACKING  /  STAGE 1", BLUE, (48, 31))
-    text(surface, title, "Beacon navigation", INK, (48, 53))
-    subtitle = (f"Saved evaluation  ·  Checkpoint {replay.checkpoint:,} transitions  "
-                f"({replay.checkpoint_index + 1}/{len(replay.records)})"
-                if replay else "Explore the environment, one action at a time.")
-    text(surface, body, subtitle, MUTED, (49, 100))
-    if replay and replay.is_reliable_checkpoint:
-        text(surface, small, "RELIABLE COMPETENCE CONFIRMED", '#b34684', (535, 125))
-
-    board_rect = pygame.Rect(BOARD_X - 8, BOARD_Y - 8, CELL * BOARD_SIZE + 16, CELL * BOARD_SIZE + 16)
-    pygame.draw.rect(surface, "#e6ebf4", board_rect, border_radius=14)
-    for row in range(BOARD_SIZE):
-        for col in range(BOARD_SIZE):
-            rect = pygame.Rect(BOARD_X + col * CELL + 2, BOARD_Y + row * CELL + 2, CELL - 4, CELL - 4)
-            color = "#ffffff" if (row + col) % 2 == 0 else "#f9faff"
-            pygame.draw.rect(surface, color, rect, border_radius=7)
-
-    if len(path) > 1:
-        pygame.draw.lines(surface, "#b0bfff", False, [cell_center(pos) for pos in path], 5)
-
-    goal_center = cell_center(env.goal_pos)
-    goal_rect = pygame.Rect(0, 0, 48, 48)
-    goal_rect.center = goal_center
-    pygame.draw.rect(surface, "#fff0db", goal_rect, border_radius=12)
-    pygame.draw.rect(surface, ORANGE, goal_rect, width=3, border_radius=12)
-    goal_icon = pygame.Rect(0, 0, 18, 18)
-    goal_icon.center = goal_center
-    pygame.draw.rect(surface, ORANGE, goal_icon, border_radius=4)
-
-    agent_center = cell_center(env.agent_pos)
-    smooth_circle(surface, "#dfe4ff", agent_center, 23)
-    smooth_circle(surface, BLUE, agent_center, 16)
-    agent_label = heading.render("A", True, pygame.Color("#ffffff"))
-    surface.blit(agent_label, agent_label.get_rect(center=agent_center))
-
-    if replay and replay.finished:
-        banner = pygame.Rect(BOARD_X + 16, BOARD_Y + 14, CELL * BOARD_SIZE - 32, 53)
-        pygame.draw.rect(surface, '#17233d', banner, border_radius=10)
-        text(surface, body, f"EPISODE FINISHED  ·  {replay.outcome.upper()}", '#ffffff',
-             (banner.x + 15, banner.y + 8))
-        if replay.play_all and replay.episode_index + 1 < len(replay.episodes):
-            detail = 'Paused' if replay.paused else 'Next episode shortly'
-        elif replay.episode_index + 1 == len(replay.episodes) and replay.checkpoint_index + 1 < len(replay.records):
-            detail = 'Paused' if replay.paused else ('Next checkpoint shortly' if replay.play_all else 'Use ] for next checkpoint')
-        elif replay.episode_index + 1 == len(replay.episodes):
-            detail = 'Last episode of last checkpoint'
-        else:
-            detail = 'Use Right for the next episode'
-        text(surface, small, detail, '#c5cee1', (banner.x + 15, banner.y + 31))
-
-    panel = pygame.Rect(535, 145, 315, 460)
-    pygame.draw.rect(surface, "#ffffff", panel, border_radius=16)
-    episode_title = f"Episode {replay.episode_index + 1} / {len(replay.episodes)}" if replay else "Episode"
-    text(surface, heading, episode_title, INK, (557, 168))
-    if replay and replay.finished:
-        status = replay.outcome
-        status_color = "#247b65" if replay.episode['genuine_success'] else "#b36d32"
-    elif replay:
-        status, status_color = ("Paused", MUTED) if replay.paused else ("Playing", BLUE)
-    elif env.episode_ended:
-        status = "Completed" if last_action == "claim" and last_reward > 0 else "Time limit reached"
-        status_color = "#247b65" if status == "Completed" else "#b36d32"
-    else:
-        status, status_color = "In progress", BLUE
-    text(surface, small, status.upper(), status_color, (557, 201))
-
-    metrics = [
-        ("ACTIONS", f"{env.action_count} / {env.max_actions}"),
-        ("LAST ACTION", last_action.title() if last_action else "—"),
-        ("LAST REWARD", f"{last_reward:+.2f}"),
-        ("EPISODE RETURN", f"{env.total_reward:+.2f}"),
-    ]
-    for index, (label, value) in enumerate(metrics):
-        y = 241 + index * 57
-        text(surface, small, label, MUTED, (557, y))
-        text(surface, heading, value, INK, (557, y + 18))
-
-    pygame.draw.line(surface, "#e8ecf3", (557, 474), (827, 474))
-    text(surface, small, "CONTROLS", MUTED, (557, 492))
-    if replay:
-        text(surface, body, f"Space  ·  Pause    A  ·  Play all: {'on' if replay.play_all else 'off'}", INK, (557, 510))
-        text(surface, body, "Left / Right  ·  Previous / next episode", INK, (557, 533))
-        text(surface, body, "[ / ]  ·  Previous / next checkpoint", INK, (557, 556))
-        text(surface, body, f"Up / Down  ·  Speed: {replay.speed:g}x    R  ·  Restart", INK, (557, 579))
-    else:
-        text(surface, body, "Arrow keys  ·  Move", INK, (557, 516))
-        text(surface, body, "C  ·  Claim     P  ·  Pickup", INK, (557, 542))
-        text(surface, body, "R  ·  Reset      Esc  ·  Quit", INK, (557, 568))
-
-    smooth_circle(surface, BLUE, (53, 621), 4)
-    text(surface, small, "AGENT", BLUE, (64, 615))
-    pygame.draw.rect(surface, ORANGE, (151, 617, 8, 8), border_radius=2)
-    text(surface, small, "BEACON", ORANGE, (166, 615))
+from board_rendering import BOARD_SIZE, HEIGHT, WIDTH, draw
 
 
 class ReplaySession:
-    speeds = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 10.0)
+    speeds = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0)
     end_pause_seconds = 1.5
 
-    def __init__(self, record, episode_index=0, max_actions=None):
-        self.records = record if isinstance(record, list) else [record]
+    def __init__(self, record: dict[str, Any] | list[dict[str, Any]],
+                 episode_index: int = 0, max_actions: int | None = None):
+        self.records: list[dict[str, Any]] = record if isinstance(record, list) else [record]
         if not self.records or any(not item['episodes'] for item in self.records):
             raise ValueError('A selected checkpoint has no recorded episodes')
         if any(episode['board_size'] != BOARD_SIZE for item in self.records for episode in item['episodes']):
@@ -228,7 +104,7 @@ class ReplaySession:
             return
         self.elapsed += elapsed_seconds
         if self.finished:
-            if self.play_all and self.elapsed >= self.end_pause_seconds:
+            if self.play_all and self.elapsed >= self.end_pause_seconds / self.speed:
                 if self.episode_index + 1 < len(self.episodes):
                     self.select_episode(self.episode_index + 1)
                 elif self.checkpoint_index + 1 < len(self.records):

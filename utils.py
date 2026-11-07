@@ -85,6 +85,8 @@ def save_run_config(RUN_DIR, settings, run_id):
             'stable_baselines3': version('stable-baselines3'),
         },
     }
+    if 'goal_split' in settings:
+        config['goal_split'] = settings['goal_split']
     try:
         repo_dir = Path(__file__).resolve().parent
         config['code_revision'] = subprocess.check_output(

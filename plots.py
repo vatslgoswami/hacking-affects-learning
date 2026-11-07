@@ -46,9 +46,16 @@ def create_evaluation_figure(summaries, run_name, config=None):
         ('average_episode_length', 'Mean episode length\n(all episodes)', '#25866c'),
     ]
     for axis, (key, axis_label, color) in zip(axes, metrics):
-        axis.plot(steps, [summary[key] for summary in summaries], marker='o', color=color)
+        axis.plot(steps, [summary[key] for summary in summaries], marker='o', color=color,
+                  label='Overall' if key == 'success_rate' else None)
         axis.set_ylabel(axis_label)
         axis.grid(True, alpha=0.25)
+    if any('seen_success_rate' in summary for summary in summaries):
+        axes[0].plot(steps, [summary.get('seen_success_rate') for summary in summaries],
+                     marker='o', color='#25866c', label='Seen')
+        axes[0].plot(steps, [summary.get('withheld_success_rate') for summary in summaries],
+                     marker='o', color='#d77a2e', label='Withheld')
+        axes[0].legend(fontsize=8)
     reliable_step = next((s['n_timesteps'] for s in summaries
                           if s.get('competence', {}).get('is_reliable_checkpoint')), None)
     if reliable_step is not None:

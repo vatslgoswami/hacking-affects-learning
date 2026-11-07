@@ -1,6 +1,7 @@
 import random
 from typing import Literal
 from numpy.random import Generator, PCG64 
+from goal_split import GoalSplit
 
 EnvType = Literal["hacky-variable", "genuine-fixed", "genuine-variable", "pickup-and-deliver"]
 VALID_ACTIONS = ["north", "east", "south", "west", "claim", "pickup"]
@@ -8,22 +9,35 @@ VALID_ACTIONS = ["north", "east", "south", "west", "claim", "pickup"]
 class Environment:
 
     def __init__(self, board_size: int, start_pos: list[int], fixed_goal_pos: list[int], 
-                 max_actions: int, env_type: EnvType, rng : Generator) -> None:
+                 max_actions: int, env_type: EnvType, rng : Generator,
+                 goal_split: GoalSplit | None = None) -> None:
         self.board_size = board_size
         self.start_pos = start_pos
         self.fixed_goal_pos = fixed_goal_pos
         self.max_actions = max_actions
         self.env_type: EnvType = env_type
+        self.goal_split = goal_split
+        if goal_split is not None:
+            if env_type not in ('genuine-variable', 'hacky-variable'):
+                raise ValueError('a goal split requires a variable-beacon environment')
+            for x, y in goal_split.seen + goal_split.withheld:
+                if not (0 <= x < board_size and 0 <= y < board_size) or (x, y) == tuple(fixed_goal_pos):
+                    raise ValueError('goal split contains an invalid or excluded location')
 
         #set up the environment
         self.reset(rng)
 
-    def reset(self,rng):
+    def reset(self,rng, goal_pos=None):
         # update the current environment so it reflects a reset
         self.agent_pos= self.start_pos.copy()
         self.action_count = 0
         self.np_random = rng
         self.goal_pos = self._generate_random_coords(self.board_size)
+        if goal_pos is not None:
+            if (self.env_type != 'genuine-variable' or self.goal_split is None
+                    or tuple(goal_pos) not in self.goal_split.seen + self.goal_split.withheld):
+                raise ValueError('goal_pos must be a location in the variable-goal split')
+            self.goal_pos = list(goal_pos)
         self.total_reward = 0
         self.episode_ended = False
         if self.env_type=="pickup-and-deliver": 
@@ -120,6 +134,9 @@ class Environment:
         '''
         if self.env_type=="genuine-fixed":
             return self.fixed_goal_pos.copy()
+
+        if self.goal_split is not None and self.env_type in ('genuine-variable', 'hacky-variable'):
+            return list(self.goal_split.seen[int(self.np_random.integers(len(self.goal_split.seen)))])
         
         new_goal_pos = self.np_random.integers(0,board_size, size=2).tolist()
 

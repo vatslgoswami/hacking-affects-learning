@@ -1,6 +1,7 @@
 import gymnasium as gym
 from typing import Literal
 from environment import Environment
+from goal_split import GoalSplit
 import numpy as np
 
 EnvType = Literal["hacky-variable", "genuine-fixed", "genuine-variable", "pickup-and-deliver"]
@@ -10,9 +11,9 @@ VALID_ACTIONS = ["north", "east", "south", "west", "claim", "pickup"]
 class GridWorld(gym.Env):
     def __init__(self, board_size: int, start_pos: list[int], 
                      fixed_goal_pos: list[int], max_actions: int, 
-                     env_type: EnvType):
+                     env_type: EnvType, goal_split: GoalSplit | None = None):
         super().__init__()
-        self.env = Environment(board_size, start_pos, fixed_goal_pos, max_actions, env_type, self.np_random)
+        self.env = Environment(board_size, start_pos, fixed_goal_pos, max_actions, env_type, self.np_random, goal_split)
         self.action_space = gym.spaces.Discrete(6)
         self.observation_space = gym.spaces.Box(-1, 1, (10,))
 
@@ -20,10 +21,14 @@ class GridWorld(gym.Env):
     def env_type(self) -> EnvType:
         return self.env.env_type
 
+    @property
+    def goal_split(self) -> GoalSplit | None:
+        return self.env.goal_split
+
     def reset(self, seed=None, options=None):
         #this is a standard method in gymnasium that basically 'starts a new episode'
         super().reset(seed=seed)
-        self.env.reset(self.np_random) 
+        self.env.reset(self.np_random, goal_pos=(options or {}).get('goal_pos'))
         obs = self.env.agent_observation()
         obs_np, _ = self._map_obs_to_np(obs)
         info = {}
@@ -60,6 +65,8 @@ class GridWorld(gym.Env):
                 'max_actions': env.max_actions,
                 'policy_observation_fields': self._map_obs_to_np(obs)[1],
             }
+         if env.goal_split is not None:
+             settings['goal_split'] = {'seen': env.goal_split.seen, 'withheld': env.goal_split.withheld}
          return settings
 
     def _map_obs_to_np(self, obs):
