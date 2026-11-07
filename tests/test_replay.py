@@ -6,7 +6,9 @@ from pathlib import Path
 import pygame
 
 from board_visualizer import ReplaySession, draw, load_replay, load_replays
-
+from board_rendering import PURPLE, ORANGE, cell_center
+from evals import _evaluate_episode
+from gym_adapter import GridWorld
 
 def make_episode(index, success):
     initial = {'agent_pos': [3, 3], 'goal_pos': [3, 0], 'package_pos': [-1, -1],
@@ -25,8 +27,56 @@ def make_episode(index, success):
         'action_count': 2, 'total_return': 0.98 if success else -0.04,
     }
 
-
 class TestReplay(unittest.TestCase):
+    def test_delivery_replay_restores_pickup_and_destination(self):
+        class Route:
+            def __init__(self):
+                self.actions = iter((1, 1, 1, 5, 0, 0, 4))
+
+            def predict(self, obs, deterministic):
+                return next(self.actions), None
+
+        env = GridWorld(7, [3, 3], [3, 0], 30, 'pickup-and-deliver')
+        _, episode = _evaluate_episode(Route(), env, 'pickup-and-deliver', 0, True, True,
+                                       delivery_pair=((6, 3), (6, 5)))
+        replay = ReplaySession({'n_timesteps': 0, 'episodes': [episode]}, max_actions=30)
+        pygame.font.init()
+        surface = pygame.Surface((900, 650))
+        fonts = tuple(pygame.font.Font(None, size) for size in (38, 27, 21, 17))
+        draw(surface, replay.env, None, 0, fonts, replay.path, replay)
+        package_x, package_y = cell_center((6, 3))
+        dest_x, dest_y = cell_center((6, 5))
+        self.assertEqual(surface.get_at((package_x, package_y)), pygame.Color(ORANGE))
+        self.assertEqual(surface.get_at((dest_x, dest_y)), pygame.Color(PURPLE))
+        self.assertFalse(replay.env.carrying_package)
+        for _ in range(4):
+            replay.advance()
+        self.assertTrue(replay.env.carrying_package)
+        self.assertEqual(replay.env.goal_pos, [6, 5])
+        draw(surface, replay.env, replay.last_action, replay.last_reward, fonts, replay.path, replay)
+        self.assertEqual(surface.get_at((package_x + 18, package_y - 17)), pygame.Color(ORANGE))
+        for _ in range(3):
+            replay.advance()
+        self.assertEqual(replay.outcome, 'Success')
+        replay.restart()
+        self.assertFalse(replay.env.carrying_package)
+        self.assertEqual(replay.env.package_pos, [6, 3])
+
+    def test_delivery_timeout_replay(self):
+        class Wait:
+            def predict(self, obs, deterministic):
+                return 5, None
+
+        env = GridWorld(7, [3, 3], [3, 0], 30, 'pickup-and-deliver')
+        _, episode = _evaluate_episode(Wait(), env, 'pickup-and-deliver', 0, True, True,
+                                       delivery_pair=((6, 3), (6, 5)))
+        replay = ReplaySession({'n_timesteps': 0, 'episodes': [episode]}, max_actions=30)
+        while not replay.finished:
+            replay.advance()
+        self.assertEqual(replay.outcome, 'Time limit reached')
+        self.assertFalse(replay.env.carrying_package)
+        self.assertEqual(replay.env.goal_pos, [6, 5])
+
     def test_episode_pause_scales_with_playback_speed(self):
         for speed_index in (1, 2, 6):
             with self.subTest(speed=ReplaySession.speeds[speed_index]):
@@ -121,7 +171,6 @@ class TestReplay(unittest.TestCase):
             self.assertEqual([item['n_timesteps'] for item in selected.records], [10240, 0])
             with self.assertRaises(ValueError):
                 load_replays(run, [0, 0])
-
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

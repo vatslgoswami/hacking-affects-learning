@@ -15,7 +15,6 @@ from mlp_architecture import SharedTrunk
 from train import train_and_eval_loop
 from utils import configure_training_logger, load_checkpoint
 
-
 class TestCheckpoints(unittest.TestCase):
     def test_milestones_are_saved_after_updates(self):
         train_env = GridWorld(7, [3, 3], [3, 0], 30, 'genuine-fixed')
@@ -120,7 +119,7 @@ class TestCheckpoints(unittest.TestCase):
             metrics['average_extra_actions'] = 2.0
             return metrics, episodes
 
-        with tempfile.TemporaryDirectory() as directory, patch('train.evaluate_model', side_effect=passing_evaluation):
+        with tempfile.TemporaryDirectory() as directory, patch('callbacks.evaluate_model', side_effect=passing_evaluation):
             _, settings = train_and_eval_loop(model, eval_env, 8, 100, directory, directory,
                                               num_eval_episodes=1, checkpoint_interval=10)
             self.assertEqual(settings['reliable_step'], 8)
@@ -154,7 +153,7 @@ class TestCheckpoints(unittest.TestCase):
                 metrics['average_extra_actions'] = 2.0 if next(passing) else 2.1
             return metrics, episodes
 
-        with tempfile.TemporaryDirectory() as directory, patch('train.evaluate_model', side_effect=controlled_evaluation):
+        with tempfile.TemporaryDirectory() as directory, patch('callbacks.evaluate_model', side_effect=controlled_evaluation):
             _, settings = train_and_eval_loop(model, eval_env, 32, 100, directory, directory,
                                               num_eval_episodes=1, checkpoint_interval=16)
             self.assertEqual(settings['evaluation_schedule'], [0, 8, 16, 24, 32])
@@ -185,7 +184,7 @@ class TestCheckpoints(unittest.TestCase):
             metrics['average_extra_actions'] = 0.0 if passed else None
             return metrics, episodes
 
-        with tempfile.TemporaryDirectory() as directory, patch('train.evaluate_model', side_effect=controlled_evaluation):
+        with tempfile.TemporaryDirectory() as directory, patch('callbacks.evaluate_model', side_effect=controlled_evaluation):
             _, settings = train_and_eval_loop(model, eval_env, 16, 100, directory, directory,
                                               num_eval_episodes=1, checkpoint_interval=100)
             self.assertEqual(seen_seeds, [(100, 10), (100, 10), (11, 12),
@@ -200,7 +199,6 @@ class TestCheckpoints(unittest.TestCase):
             self.assertEqual(confirmed['first_passing_step'], 8)
             self.assertEqual(settings['reliable_step'], 16)
             self.assertTrue((Path(directory) / 'step_16_reliable_final.zip').is_file())
-
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

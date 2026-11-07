@@ -2,7 +2,6 @@ import unittest
 import numpy as np
 from gym_adapter import GridWorld
 
-
 class TestGridWorld(unittest.TestCase):
     def setUp(self):
         self.grid = GridWorld(7, [3, 3], [3, 0], 30, "genuine-fixed")
@@ -67,7 +66,6 @@ class TestGridWorld(unittest.TestCase):
         self.assertNotIn((3, 0), first_goals)
         first.reset(seed=123)
         self.assertEqual(tuple(first.env.goal_pos), first_goals[0])
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

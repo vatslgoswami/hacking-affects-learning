@@ -1,21 +1,23 @@
 import gymnasium as gym
 from typing import Literal
 from environment import Environment
-from goal_split import GoalSplit
+from task_splits import DeliverySplit, GoalSplit
 import numpy as np
 
 EnvType = Literal["hacky-variable", "genuine-fixed", "genuine-variable", "pickup-and-deliver"]
 VALID_ACTIONS = ["north", "east", "south", "west", "claim", "pickup"]
 
-
 class GridWorld(gym.Env):
     def __init__(self, board_size: int, start_pos: list[int], 
                      fixed_goal_pos: list[int], max_actions: int, 
-                     env_type: EnvType, goal_split: GoalSplit | None = None):
+                     env_type: EnvType, goal_split: GoalSplit | None = None,
+                     delivery_split: DeliverySplit | None = None):
         super().__init__()
-        self.env = Environment(board_size, start_pos, fixed_goal_pos, max_actions, env_type, self.np_random, goal_split)
+        self.env = Environment(board_size, start_pos, fixed_goal_pos, max_actions, env_type, self.np_random, goal_split, delivery_split)
         self.action_space = gym.spaces.Discrete(6)
         self.observation_space = gym.spaces.Box(-1, 1, (10,))
+        self.assisted_start_probability = 0.0
+        self.assisted_start_max_distance = 0
 
     @property
     def env_type(self) -> EnvType:
@@ -25,13 +27,39 @@ class GridWorld(gym.Env):
     def goal_split(self) -> GoalSplit | None:
         return self.env.goal_split
 
+    @property
+    def delivery_split(self) -> DeliverySplit | None:
+        return self.env.delivery_split
+
+    def set_delivery_assistance(self, probability: float, max_distance: int):
+        """Set the chance and maximum destination distance for assisted resets."""
+        if self.env_type != 'pickup-and-deliver':
+            raise ValueError('delivery assistance requires a delivery environment')
+        if not 0 <= probability <= 1:
+            raise ValueError('assistance probability must be between 0 and 1')
+        if not isinstance(max_distance, int) or isinstance(max_distance, bool) or max_distance < 0:
+            raise ValueError('assistance distance must be a nonnegative integer')
+        self.assisted_start_probability = probability
+        self.assisted_start_max_distance = max_distance
+
+    def _choose_assisted_start(self):
+        goal_x, goal_y = self.env.goal_pos
+        positions = [(x, y) for x in range(self.env.board_size) for y in range(self.env.board_size)
+                     if abs(x - goal_x) + abs(y - goal_y) <= self.assisted_start_max_distance]
+        return positions[int(self.np_random.integers(len(positions)))]
+
     def reset(self, seed=None, options=None):
         #this is a standard method in gymnasium that basically 'starts a new episode'
         super().reset(seed=seed)
-        self.env.reset(self.np_random, goal_pos=(options or {}).get('goal_pos'))
+        self.env.reset(self.np_random, goal_pos=(options or {}).get('goal_pos'),
+                       delivery_pair=(options or {}).get('delivery_pair'))
+        assisted = (self.assisted_start_probability > 0
+                    and self.np_random.random() < self.assisted_start_probability)
+        if assisted:
+            self.env._set_assisted_delivery_start(self._choose_assisted_start())
         obs = self.env.agent_observation()
         obs_np, _ = self._map_obs_to_np(obs)
-        info = {}
+        info = {'assisted_start': assisted} if self.env_type == 'pickup-and-deliver' else {}
         return obs_np, info
 
     def step(self, n_action:int):
@@ -67,6 +95,8 @@ class GridWorld(gym.Env):
             }
          if env.goal_split is not None:
              settings['goal_split'] = {'seen': env.goal_split.seen, 'withheld': env.goal_split.withheld}
+         if env.delivery_split is not None:
+             settings['delivery_split'] = {'seen': env.delivery_split.seen, 'withheld': env.delivery_split.withheld}
          return settings
 
     def _map_obs_to_np(self, obs):
@@ -91,8 +121,6 @@ class GridWorld(gym.Env):
                 1 : "pickup-and-deliver" 
             }
             return decoding[task_mode]
-
-
 
 #----------------------------------
 def main():

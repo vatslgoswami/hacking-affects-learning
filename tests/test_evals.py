@@ -6,7 +6,6 @@ from stable_baselines3 import PPO
 from evals import _shortest_successful_length, evaluate_model
 from gym_adapter import GridWorld
 
-
 class TestEvaluation(unittest.TestCase):
     def test_environment_seed_repeats_goal_panel(self):
         class PickupModel:
@@ -146,7 +145,6 @@ class TestEvaluation(unittest.TestCase):
             after = torch.get_rng_state()
 
             self.assertTrue(torch.equal(before, after))
-
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

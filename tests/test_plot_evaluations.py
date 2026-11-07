@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 
 from plots import create_evaluation_figure, load_evaluation_summaries, save_evaluation_plot
 
-
 class TestEvaluationPlots(unittest.TestCase):
     def test_plot_uses_saved_values_in_timestep_order(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -81,7 +80,6 @@ class TestEvaluationPlots(unittest.TestCase):
             self.assertEqual(list(lines['Overall'].get_ydata()), [0.6, 0.6])
         finally:
             plt.close(figure)
-
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

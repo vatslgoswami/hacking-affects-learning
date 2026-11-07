@@ -7,11 +7,10 @@ from pathlib import Path
 from stable_baselines3 import PPO
 
 from evals import evaluate_model
-from goal_split import development_goal_split
+from task_splits import development_goal_split
 from gym_adapter import GridWorld
 from train import EvaluationCheckpointCallback, get_run_settings, train_and_eval_loop
 from utils import save_run_config
-
 
 class TestGoalSplit(unittest.TestCase):
     def setUp(self):
@@ -112,7 +111,6 @@ class TestGoalSplit(unittest.TestCase):
             config = json.loads((Path(directory) / 'config.json').read_text())
             self.assertEqual({tuple(goal) for goal in config['goal_split']['withheld']},
                              set(self.split.withheld))
-
 
 if __name__ == '__main__':
     unittest.main()

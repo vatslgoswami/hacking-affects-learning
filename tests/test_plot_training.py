@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 
 from plots import create_training_figures, load_training_diagnostics, save_training_plots
 
-
 class TestTrainingPlots(unittest.TestCase):
     def test_plots_use_update_counts_and_saved_losses(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -42,7 +41,6 @@ class TestTrainingPlots(unittest.TestCase):
             (Path(directory) / 'progress.csv').write_text('train/update_timesteps\n8\n')
             with self.assertRaisesRegex(ValueError, 'No recorded values for train/policy_gradient_loss'):
                 load_training_diagnostics(directory)
-
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

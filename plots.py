@@ -5,7 +5,6 @@ from pathlib import Path
 
 import matplotlib.pyplot as plt
 
-
 def load_evaluation_summaries(run_dir):
     evaluations_dir = Path(run_dir) / 'evaluations'
     paths = list(evaluations_dir.glob('step_*.json'))
@@ -20,7 +19,6 @@ def load_evaluation_summaries(run_dir):
     if len({summary['n_timesteps'] for summary in summaries}) != len(summaries):
         raise ValueError('Evaluation summaries contain duplicate timestep counts')
     return summaries
-
 
 def create_evaluation_figure(summaries, run_name, config=None):
     steps = [summary['n_timesteps'] for summary in summaries]
@@ -76,7 +74,6 @@ def create_evaluation_figure(summaries, run_name, config=None):
             axes[2].legend(fontsize=8)
     return fig
 
-
 def save_evaluation_plot(run_dir):
     run_dir = Path(run_dir)
     summaries = load_evaluation_summaries(run_dir)
@@ -90,9 +87,6 @@ def save_evaluation_plot(run_dir):
     finally:
         plt.close(figure)
     return output
-
-
-
 
 def load_training_diagnostics(run_dir):
     path = Path(run_dir) / 'progress.csv'
@@ -109,7 +103,6 @@ def load_training_diagnostics(run_dir):
             raise ValueError(f'No recorded values for {key} in {path}')
         metrics[key] = sorted(points)
     return metrics
-
 
 def create_training_figures(metrics, run_name, model_seed='unknown', reliable_step=None):
     losses, loss_axis = plt.subplots(figsize=(9, 5), layout='constrained')
@@ -139,7 +132,6 @@ def create_training_figures(metrics, run_name, model_seed='unknown', reliable_st
             axis.legend(fontsize=8)
     return losses, entropy
 
-
 def save_training_plots(run_dir):
     run_dir = Path(run_dir)
     metrics = load_training_diagnostics(run_dir)
@@ -166,7 +158,6 @@ def save_training_plots(run_dir):
         plt.close(entropy)
     return outputs
 
-
 def main():
     parser = argparse.ArgumentParser(description='Plot saved results for a training run.')
     parser.add_argument('run_dir', type=Path, help='Path to the run directory')
@@ -179,8 +170,6 @@ def main():
         for path in save_training_plots(args.run_dir):
             print(f'Saved training plot: {path}')
 
-
 if __name__ == '__main__':
     main()
-
 

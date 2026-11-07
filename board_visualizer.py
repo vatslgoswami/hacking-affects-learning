@@ -9,9 +9,7 @@ from numpy.random import default_rng
 
 from environment import Environment
 
-
 from board_rendering import BOARD_SIZE, HEIGHT, WIDTH, draw
-
 
 class ReplaySession:
     speeds = (0.25, 0.5, 1.0, 2.0, 4.0, 8.0, 16.0)
@@ -62,6 +60,9 @@ class ReplaySession:
         initial = self.episode['initial_state']
         self.env = SimpleNamespace(agent_pos=list(initial['agent_pos']),
                                    goal_pos=list(initial['goal_pos']),
+                                   package_pos=list(initial.get('package_pos', [-1, -1])),
+                                   package_active=bool(initial.get('package_active', False)),
+                                   carrying_package=bool(initial.get('carrying_package', False)),
                                    action_count=0, max_actions=self.max_actions,
                                    total_reward=0.0, episode_ended=False)
         self.path = [tuple(self.env.agent_pos)]
@@ -89,6 +90,9 @@ class ReplaySession:
         step = self.episode['steps'][self.step_index]
         self.env.agent_pos = list(step['state']['agent_pos'])
         self.env.goal_pos = list(step['state']['goal_pos'])
+        self.env.package_pos = list(step['state'].get('package_pos', self.env.package_pos))
+        self.env.package_active = bool(step['state'].get('package_active', self.env.package_active))
+        self.env.carrying_package = bool(step['state'].get('carrying_package', self.env.carrying_package))
         self.env.action_count += 1
         self.env.total_reward += step['reward']
         self.env.episode_ended = step['terminated'] or step['truncated']
@@ -116,7 +120,6 @@ class ReplaySession:
             self.elapsed = 0.0
             self.advance()
 
-
 def load_replays(run_dir, checkpoints, episode_index=0):
     run_dir = Path(run_dir)
     if not checkpoints:
@@ -135,10 +138,8 @@ def load_replays(run_dir, checkpoints, episode_index=0):
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
     return ReplaySession(records, episode_index, config.get('max_actions'))
 
-
 def load_replay(run_dir, checkpoint, episode_index=0):
     return load_replays(run_dir, [checkpoint], episode_index)
-
 
 def main():
     parser = argparse.ArgumentParser(description='Play the board manually or replay a saved evaluation.')
@@ -220,7 +221,6 @@ def main():
             draw(surface, env, last_action, last_reward, fonts, path)
         pygame.display.flip()
     pygame.quit()
-
 
 if __name__ == "__main__":
     main()

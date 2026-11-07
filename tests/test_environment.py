@@ -2,7 +2,6 @@ import unittest
 from numpy.random import Generator, PCG64
 from environment import Environment
 
-
 class TestEnvironment(unittest.TestCase):
     def setUp(self):
         self.env = Environment(7, [3, 3], [3, 0], 30, "genuine-fixed", Generator(PCG64()))
@@ -24,7 +23,6 @@ class TestEnvironment(unittest.TestCase):
         self.assertEqual(self.env.action_count, 4)
         self.assertAlmostEqual(self.env.total_reward, 0.96)
         self.assertTrue(self.env.episode_ended)
-
 
     def test_invalid_claim(self):
         self.env.agent_action("claim")
