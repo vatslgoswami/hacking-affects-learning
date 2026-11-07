@@ -49,6 +49,22 @@ class TestEvaluationPlots(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'No evaluation summaries'):
                 load_evaluation_summaries(directory)
 
+    def test_reliable_checkpoint_is_marked_on_all_evaluation_axes(self):
+        summaries = [
+            {'n_timesteps': step, 'success_rate': 1.0, 'average_return': 0.96,
+             'average_episode_length': 4, 'eval_episode_count': 25, 'eval_seed': 100,
+             'eval_action_sampler_choice': 'stochastic',
+             'competence': {'is_reliable_checkpoint': step == 2048}}
+            for step in (0, 2048)
+        ]
+        figure = create_evaluation_figure(summaries, 'test')
+        try:
+            for axis in figure.axes:
+                self.assertTrue(any(line.get_label().startswith('Reliable competence:')
+                                    for line in axis.lines))
+        finally:
+            plt.close(figure)
+
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

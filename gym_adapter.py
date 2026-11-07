@@ -16,6 +16,10 @@ class GridWorld(gym.Env):
         self.action_space = gym.spaces.Discrete(6)
         self.observation_space = gym.spaces.Box(-1, 1, (10,))
 
+    @property
+    def env_type(self) -> EnvType:
+        return self.env.env_type
+
     def reset(self, seed=None, options=None):
         #this is a standard method in gymnasium that basically 'starts a new episode'
         super().reset(seed=seed)

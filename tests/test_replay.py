@@ -83,9 +83,11 @@ class TestReplay(unittest.TestCase):
             run = Path(directory)
             (run / 'evaluations').mkdir()
             (run / 'config.json').write_text(json.dumps({'max_actions': 30}))
-            record = {'n_timesteps': 0, 'episodes': [make_episode(0, True)]}
+            record = {'n_timesteps': 0, 'episodes': [make_episode(0, True)],
+                      'competence': {'is_reliable_checkpoint': True}}
             (run / 'evaluations' / 'episodes_0.json').write_text(json.dumps(record))
             replay = load_replay(run, 0)
+            self.assertTrue(replay.is_reliable_checkpoint)
             self.assertEqual(replay.env.max_actions, 30)
             pygame.font.init()
             surface = pygame.Surface((900, 650))
@@ -99,6 +101,9 @@ class TestReplay(unittest.TestCase):
             second = {'n_timesteps': 10240, 'episodes': [make_episode(0, False)]}
             (run / 'evaluations' / 'episodes_10240.json').write_text(json.dumps(second))
             selected = load_replays(run, [10240, 0])
+            self.assertFalse(selected.is_reliable_checkpoint)
+            selected.select_checkpoint(1)
+            self.assertTrue(selected.is_reliable_checkpoint)
             self.assertEqual([item['n_timesteps'] for item in selected.records], [10240, 0])
             with self.assertRaises(ValueError):
                 load_replays(run, [0, 0])

@@ -49,6 +49,13 @@ def create_evaluation_figure(summaries, run_name, config=None):
         axis.plot(steps, [summary[key] for summary in summaries], marker='o', color=color)
         axis.set_ylabel(axis_label)
         axis.grid(True, alpha=0.25)
+    reliable_step = next((s['n_timesteps'] for s in summaries
+                          if s.get('competence', {}).get('is_reliable_checkpoint')), None)
+    if reliable_step is not None:
+        for axis in axes:
+            axis.axvline(reliable_step, color='#b34684', linestyle=':',
+                         label=f'Reliable competence: {reliable_step:,}')
+        axes[0].legend(fontsize=8)
     axes[0].set_ylim(-0.03, 1.03)
     axes[-1].set_xlabel('Training transitions')
 
@@ -97,7 +104,7 @@ def load_training_diagnostics(run_dir):
     return metrics
 
 
-def create_training_figures(metrics, run_name, model_seed='unknown'):
+def create_training_figures(metrics, run_name, model_seed='unknown', reliable_step=None):
     losses, loss_axis = plt.subplots(figsize=(9, 5), layout='constrained')
     for key, label, color in (
         ('train/policy_gradient_loss', 'Policy loss', '#526bf4'),
@@ -118,6 +125,11 @@ def create_training_figures(metrics, run_name, model_seed='unknown'):
     entropy_axis.set_xlabel('Training transitions at update')
     entropy_axis.set_ylabel('Entropy loss (negative entropy)')
     entropy_axis.grid(True, alpha=0.25)
+    if reliable_step is not None:
+        for axis in (loss_axis, entropy_axis):
+            axis.axvline(reliable_step, color='#b34684', linestyle=':',
+                         label=f'Reliable competence: {reliable_step:,}')
+            axis.legend(fontsize=8)
     return losses, entropy
 
 
@@ -127,7 +139,15 @@ def save_training_plots(run_dir):
     config_path = run_dir / 'config.json'
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
     seed = config.get('PPO_settings', {}).get('seed', 'unknown')
-    losses, entropy = create_training_figures(metrics, run_dir.name, seed)
+    reliable_step = config.get('training_eval_loop_settings', {}).get('reliable_step')
+    if reliable_step is None and (run_dir / 'evaluations').exists():
+        try:
+            summaries = load_evaluation_summaries(run_dir)
+            reliable_step = next((s['n_timesteps'] for s in summaries
+                                  if s.get('competence', {}).get('is_reliable_checkpoint')), None)
+        except ValueError:
+            pass
+    losses, entropy = create_training_figures(metrics, run_dir.name, seed, reliable_step)
     outputs = (run_dir / 'plots' / 'policy_value_loss.png',
                run_dir / 'plots' / 'entropy_loss.png')
     try:

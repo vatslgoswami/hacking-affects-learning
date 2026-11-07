@@ -49,6 +49,8 @@ def draw(surface, env, last_action, last_reward, fonts, path, replay=None):
                 f"({replay.checkpoint_index + 1}/{len(replay.records)})"
                 if replay else "Explore the environment, one action at a time.")
     text(surface, body, subtitle, MUTED, (49, 100))
+    if replay and replay.is_reliable_checkpoint:
+        text(surface, small, "RELIABLE COMPETENCE CONFIRMED", '#b34684', (535, 125))
 
     board_rect = pygame.Rect(BOARD_X - 8, BOARD_Y - 8, CELL * BOARD_SIZE + 16, CELL * BOARD_SIZE + 16)
     pygame.draw.rect(surface, "#e6ebf4", board_rect, border_radius=14)
@@ -157,6 +159,10 @@ class ReplaySession:
     @property
     def speed(self):
         return self.speeds[self.speed_index]
+
+    @property
+    def is_reliable_checkpoint(self):
+        return bool(self.records[self.checkpoint_index].get('competence', {}).get('is_reliable_checkpoint'))
 
     @property
     def episode(self):

@@ -7,6 +7,11 @@ class TestGridWorld(unittest.TestCase):
     def setUp(self):
         self.grid = GridWorld(7, [3, 3], [3, 0], 30, "genuine-fixed")
 
+    def test_env_type_reflects_underlying_environment(self):
+        self.assertEqual(self.grid.env_type, 'genuine-fixed')
+        self.grid.env.env_type = 'genuine-variable'
+        self.assertEqual(self.grid.env_type, 'genuine-variable')
+
     def test_reset(self):
         initial_obs, _ = self.grid.reset(seed=123)
         self.grid.step(2)

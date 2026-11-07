@@ -18,8 +18,8 @@ def create_run_folder(BASE_DIR, run_id):
         path.mkdir(parents=True, exist_ok=True)
     return run_dir, checkpoints_dir, evals_dir, plots_dir
 
-def save_checkpoint(model, checkpoints_dir):
-    checkpoint_path = Path(checkpoints_dir) / f'step_{model.num_timesteps}.zip'
+def save_checkpoint(model, checkpoints_dir, suffix=''):
+    checkpoint_path = Path(checkpoints_dir) / f'step_{model.num_timesteps}{suffix}.zip'
     with checkpoint_path.open('xb') as checkpoint_file:
         model.save(checkpoint_file)
     return checkpoint_path
@@ -32,30 +32,33 @@ def configure_training_logger(model, run_dir):
     model.set_logger(logger)
     return logger
 
-def save_evaluation_summary(evals_dir, n_timesteps, metrics, eval_episode_count, eval_seed, is_eval_greedy):
-    success_rate, average_return, average_episode_length = metrics
+def save_evaluation_summary(evals_dir, n_timesteps, metrics, eval_episode_count, eval_seed, is_eval_greedy, competence=None, eval_env_seed=None):
     summary = {
         'n_timesteps': n_timesteps,
-        'success_rate': success_rate,
-        'average_return': average_return,
-        'average_episode_length': average_episode_length,
+        **metrics,
         'eval_episode_count': eval_episode_count,
         'eval_seed': eval_seed,
+        'eval_env_seed': eval_env_seed,
         'eval_action_sampler_choice': 'greedy' if is_eval_greedy else 'stochastic',
     }
+    if competence is not None:
+        summary['competence'] = competence
     path = Path(evals_dir) / f'step_{n_timesteps}.json'
     with path.open('x') as file:
         json.dump(summary, file, indent=2)
     return path
 
-def save_evaluation_episodes(evals_dir, n_timesteps, episodes, eval_seed, is_eval_greedy):
+def save_evaluation_episodes(evals_dir, n_timesteps, episodes, eval_seed, is_eval_greedy, competence=None, eval_env_seed=None):
     record = {
         'n_timesteps': n_timesteps,
         'eval_episode_count': len(episodes),
         'eval_seed': eval_seed,
+        'eval_env_seed': eval_env_seed,
         'eval_action_sampler_choice': 'greedy' if is_eval_greedy else 'stochastic',
         'episodes': episodes,
     }
+    if competence is not None:
+        record['competence'] = competence
     path = Path(evals_dir) / f'episodes_{n_timesteps}.json'
     with path.open('x') as file:
         json.dump(record, file, indent=2)
