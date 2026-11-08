@@ -1,10 +1,12 @@
 import unittest
 
+import matplotlib.pyplot as plt
 import torch
 from stable_baselines3 import PPO
 
 from rl_envs.gym_adapter import GridWorld
 from rl_envs.task_splits import development_goal_split
+from experiments.runners.plot_final_results import make_figure
 from training.callbacks import EvaluationCheckpointCallback
 from training.evals import evaluate_model
 
@@ -26,6 +28,36 @@ class DeliveryPolicy:
         return (4 if carrying else 5), None
 
 class TestEvaluation(unittest.TestCase):
+
+    def test_average_competence_marker_appears_on_return_plot(self):
+        settings = {'environment': {'max_actions': 30}, 'training': {'competence_thresholds': {}}}
+        def run(seed, final_return, reliable_step):
+            return {'seed': seed, 'settings': settings, 'source_checkpoint': None,
+                    'reliable_step': reliable_step, 'entropy': [[2048, -1.0]],
+                    'evaluations': [{'step': 0, 'success_rate': 0.0, 'average_return': -0.3,
+                                     'average_episode_length': 30.0},
+                                    {'step': 4096, 'success_rate': 0.0, 'average_return': final_return,
+                                     'average_episode_length': 30.0}]}
+        group = {'category': 'baselines', 'name': 'example',
+                 'runs': [run(7, 1.0, 2048), run(9, 0.5, 4096), run(11, 0.0, None)]}
+        figure = make_figure(group)
+        try:
+            return_axis = figure.axes[1]
+            self.assertAlmostEqual(return_axis.lines[0].get_ydata()[-1], 0.5)
+            self.assertEqual(list(return_axis.lines[1].get_xdata()), [3072, 3072])
+            self.assertIn('2/3 seeds', return_axis.lines[1].get_label())
+            self.assertFalse(any('competence' in line.get_label() for line in figure.axes[0].lines))
+        finally:
+            plt.close(figure)
+
+        for run_data in group['runs']:
+            run_data['reliable_step'] = None
+        figure = make_figure(group)
+        try:
+            self.assertEqual(len(figure.axes[1].lines), 1)
+            self.assertIn('0/3 seeds', figure._suptitle.get_text())
+        finally:
+            plt.close(figure)
 
     def test_efficiency_uses_each_goal_and_excludes_failed_episodes(self):
         class PanelEnv(GridWorld):

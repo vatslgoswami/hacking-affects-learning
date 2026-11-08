@@ -178,10 +178,9 @@ def aggregate(group):
 def make_figure(group):
     steps, metrics, entropy_steps, entropy, reached = aggregate(group)
     runs = group['runs']
-    # Keep the conditional competence mean separate from the all-seed learning curves.
+    # Count every seed, including those that did not reach competence.
     fraction = f'{len(reached)}/{len(runs)} seeds'
-    reliability = (f'{fraction}; mean among reached: {np.mean(reached):,.0f} steps'
-                   if reached else f'{fraction}; not reached within budget')
+    reliability = f'{fraction} reached' if reached else f'{fraction}; not reached within budget'
     fig, axes = plt.subplots(2, 2, figsize=(13, 9), sharex=True, layout='constrained')
     source = runs[0]['source_checkpoint']
     if source:
@@ -211,10 +210,6 @@ def make_figure(group):
         if key == 'success_rate':
             success_axis.fill_between(steps, np.maximum(0, mean - std), np.minimum(1, mean + std),
                                       color=color, alpha=0.15, label='Genuine: ±1 SD')
-    if reached:
-        success_axis.axvline(np.mean(reached), color='#303030', linestyle=':', linewidth=1.4,
-                             label=('Mean shortcut confirmation step among reached' if is_shortcut
-                                    else 'Mean confirmation step among reached'))
     success_axis.set_title('Evaluation success')
     success_axis.set_ylabel('Episode fraction')
     success_axis.set_ylim(-0.03, 1.03)
@@ -235,6 +230,12 @@ def make_figure(group):
         axis.fill_between(steps, lower, upper, color=color, alpha=0.15)
         axis.set_title(label)
         axis.set_ylabel(label)
+    # Mark the average saved competence checkpoint on the return plot.
+    if reached:
+        competence_name = 'shortcut competence' if is_shortcut else 'competence'
+        axes[0, 1].axvline(np.mean(reached), color='#303030', linestyle=':', linewidth=1.4,
+                           label=f'Average {competence_name}: {np.mean(reached):,.0f} steps ({fraction})')
+        axes[0, 1].legend(fontsize=8, loc='best')
     mean, std = entropy
     axes[1, 1].plot(entropy_steps, mean, color='#8b5abd', linewidth=1.8)
     axes[1, 1].fill_between(entropy_steps, mean - std, mean + std, color='#8b5abd', alpha=0.15)
@@ -293,7 +294,7 @@ def write_index(output_dir, index):
     lines = [
         '# Combined experiment plots', '',
         'Each figure averages one experiment condition across model seeds. Shading is ±1 population standard deviation across those seeds, not a confidence interval. Success and episode-length shading is clipped to the task’s possible range. All selected seeds, including those that never reached competence, are included in every curve.', '',
-        'The competence count uses each run’s saved confirmation step. The dotted line and mean are calculated only among seeds that reached competence; they are not the point where the average curve crosses a threshold. No line is drawn when none reached competence.', '',
+        'The dotted line on the return plot shows the average saved competence checkpoint among seeds that reached it. The title shows how many seeds reached competence; no line is drawn if none did. The checkpoint is based on success and efficiency, not a return threshold.', '',
         'For the shortcut baseline, competence measures shortcut success and efficiency, while the blue curve measures genuine success. Other tasks use their own saved success and efficiency thresholds.', '',
         'Source checkpoint labels distinguish the earlier reliable checkpoint from the final source checkpoint. PPO follow-up steps begin at zero. Entropy loss is negative entropy measured on training rollouts and begins after the first PPO update.', '',
         'Baseline and regular follow-up groups use seeds 7, 9, 11, 13, 15, 17 and 19. Delivery after demonstrations uses the four completed seeds shared by every group: 7, 9, 11 and 13.', '',

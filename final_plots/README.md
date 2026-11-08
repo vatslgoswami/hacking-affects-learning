@@ -2,7 +2,7 @@
 
 Each figure averages one experiment condition across model seeds. Shading is ±1 population standard deviation across those seeds, not a confidence interval. Success and episode-length shading is clipped to the task’s possible range. All selected seeds, including those that never reached competence, are included in every curve.
 
-The competence count uses each run’s saved confirmation step. The dotted line and mean are calculated only among seeds that reached competence; they are not the point where the average curve crosses a threshold. No line is drawn when none reached competence.
+The dotted line on the return plot shows the average saved competence checkpoint among seeds that reached it. The title shows how many seeds reached competence; no line is drawn if none did. The checkpoint is based on success and efficiency, not a return threshold.
 
 For the shortcut baseline, competence measures shortcut success and efficiency, while the blue curve measures genuine success. Other tasks use their own saved success and efficiency thresholds.
 
