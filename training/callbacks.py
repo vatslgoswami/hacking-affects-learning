@@ -2,7 +2,7 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3 import PPO
 from typing import cast
 
-from evals import evaluate_model
+from training.evals import evaluate_model
 from utils import save_checkpoint, save_evaluation_episodes, save_evaluation_summary
 
 class EntropyScheduleCallback(BaseCallback):

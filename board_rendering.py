@@ -45,6 +45,7 @@ def _draw_header(surface, fonts, replay, env):
         text(surface, small, "RELIABLE COMPETENCE CONFIRMED", '#b34684', (535, 125))
 
 def _draw_board(surface, env, fonts, path, replay):
+    # Draw the board and any path already taken by the agent.
     _, heading, body, small = fonts
     board_rect = pygame.Rect(BOARD_X - 8, BOARD_Y - 8, CELL * BOARD_SIZE + 16, CELL * BOARD_SIZE + 16)
     pygame.draw.rect(surface, "#e6ebf4", board_rect, border_radius=14)
@@ -57,6 +58,7 @@ def _draw_board(surface, env, fonts, path, replay):
     if len(path) > 1:
         pygame.draw.lines(surface, "#b0bfff", False, [cell_center(pos) for pos in path], 5)
 
+    # Show the beacon or delivery destination, then the package if it is not carried.
     goal_center = cell_center(env.goal_pos)
     delivery = is_delivery(env)
     goal_color = PURPLE if delivery else ORANGE
@@ -83,6 +85,7 @@ def _draw_board(surface, env, fonts, path, replay):
         pygame.draw.line(surface, ORANGE, (package_rect.centerx, package_rect.top + 3),
                          (package_rect.centerx, package_rect.bottom - 3), 2)
 
+    # Draw the agent and add a package badge when it is carrying one.
     agent_center = cell_center(env.agent_pos)
     smooth_circle(surface, "#dfe4ff", agent_center, 23)
     smooth_circle(surface, BLUE, agent_center, 16)
@@ -93,6 +96,7 @@ def _draw_board(surface, env, fonts, path, replay):
         pygame.draw.rect(surface, ORANGE, badge, border_radius=4)
         pygame.draw.rect(surface, '#ffffff', badge, width=2, border_radius=4)
 
+    # Overlay the episode result while playback waits to continue.
     if replay and replay.finished:
         banner = pygame.Rect(BOARD_X + 16, BOARD_Y + 14, CELL * BOARD_SIZE - 32, 53)
         pygame.draw.rect(surface, '#17233d', banner, border_radius=10)

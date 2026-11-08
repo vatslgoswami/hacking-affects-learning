@@ -1,6 +1,6 @@
-from environment import EnvType
+from rl_envs.environment import EnvType
 from stable_baselines3.common.base_class import BaseAlgorithm
-from gym_adapter import GridWorld
+from rl_envs.gym_adapter import GridWorld
 import torch
 
 def _board_state(test_env: GridWorld):
@@ -14,6 +14,7 @@ def _board_state(test_env: GridWorld):
     }
 
 def _shortest_successful_length(initial_state, env_type: EnvType):
+    # Count the shortest route plus the actions needed to complete the task.
     def distance(start, end):
         return sum(abs(a - b) for a, b in zip(start, end))
 
@@ -25,12 +26,14 @@ def _shortest_successful_length(initial_state, env_type: EnvType):
     return distance(start, goal) + 1
 
 def _evaluate_episode(model, test_env, env_type, episode_index, is_eval_greedy, record_episodes, reset_seed=None, goal=None, delivery_pair=None):
+    # Start the episode at the selected goal or delivery pair from the evaluation panel.
     if delivery_pair is not None:
         obs, _ = test_env.reset(seed=reset_seed, options={'delivery_pair': delivery_pair})
     elif goal is None:
         obs, _ = test_env.reset(seed=reset_seed)
     else:
         obs, _ = test_env.reset(seed=reset_seed, options={'goal_pos': goal})
+    # Keep the starting state and shortest route for measuring efficiency later.
     initial_state = _board_state(test_env)
     shortest_length = _shortest_successful_length(initial_state, env_type)
     episode_length = 0
@@ -40,6 +43,7 @@ def _evaluate_episode(model, test_env, env_type, episode_index, is_eval_greedy, 
     shortcut_visited = env_type == 'hacky-variable' and test_env.env.agent_pos == test_env.env.fixed_goal_pos
     episode = None
 
+    # Set up the replay record only when the caller wants to save this episode.
     if record_episodes:
         episode = {
             'episode_index': episode_index,
@@ -49,6 +53,7 @@ def _evaluate_episode(model, test_env, env_type, episode_index, is_eval_greedy, 
             'steps': [],
         }
 
+    # Let the policy act until the episode ends and collect its reward and task events.
     while True:
         action, _ = model.predict(obs, deterministic=is_eval_greedy)
         action_id = int(action)
@@ -65,6 +70,7 @@ def _evaluate_episode(model, test_env, env_type, episode_index, is_eval_greedy, 
                 test_env.env.carrying_package and test_env.env.agent_pos == test_env.env.goal_pos
             )
 
+        # Save the state after each action so the visualizer can replay the path.
         if episode is not None:
             episode['steps'].append({
                 'action': action_id,
@@ -80,6 +86,7 @@ def _evaluate_episode(model, test_env, env_type, episode_index, is_eval_greedy, 
             success = bool(info.get('genuine_success', False))
             break
 
+    # Return compact metrics for every episode and detailed steps when recording is enabled.
     outcome = {
         'genuine_success': success,
         'total_return': episode_return,
@@ -104,6 +111,7 @@ def _evaluate_episode(model, test_env, env_type, episode_index, is_eval_greedy, 
     return outcome, episode
 
 def _summarize_episodes(outcomes):
+    # Average rewards and lengths over all episodes, and efficiency over successes only.
     num_episodes = len(outcomes)
     successes = [outcome for outcome in outcomes if outcome['genuine_success']]
     num_success = len(successes)
@@ -119,6 +127,7 @@ def _summarize_episodes(outcomes):
         'average_shortest_successful_episode_length': sum(successful_shortest_lengths) / num_success if num_success else None,
         'average_extra_actions': (sum(successful_lengths) - sum(successful_shortest_lengths)) / num_success if num_success else None,
     }
+    # Add the events that matter for delivery or shortcut use.
     if 'picked_up' in outcomes[0]:
         summary_metrics.update({
             'num_episodes_with_pickup': sum(outcome['picked_up'] for outcome in outcomes),
@@ -141,15 +150,8 @@ def _summarize_episodes(outcomes):
         })
     return summary_metrics
 
-def evaluate_model(model:BaseAlgorithm, test_env:GridWorld, env_type:EnvType, num_episodes=25,
-                   eval_seed=100, is_eval_greedy:bool=False, record_episodes=False, eval_env_seed=10):
-    if num_episodes <= 0:
-        raise ValueError('num_episodes must be positive')
-    if env_type != test_env.env_type:
-        raise ValueError('env_type must match the evaluation environment')
-
-    outcomes = []
-    episodes = []
+def _evaluation_panels(test_env, env_type, num_episodes, eval_env_seed):
+    # Select the fixed development panels when the task has a train/test split.
     split = test_env.env.goal_split if env_type in ('genuine-variable', 'hacky-variable') else None
     if split is not None and num_episodes != 25:
         raise ValueError('the development goal panel requires 25 evaluation episodes')
@@ -160,6 +162,31 @@ def evaluate_model(model:BaseAlgorithm, test_env:GridWorld, env_type:EnvType, nu
     if delivery_split is not None and (num_episodes != 25 or eval_env_seed is None):
         raise ValueError('the development delivery panel requires 25 episodes and an environment seed')
     delivery_panel = delivery_split.evaluation_panel(eval_env_seed) if delivery_split is not None else None
+    return panel, delivery_panel
+
+def _add_group_metrics(metrics, outcomes, group_key, extra_metrics=()):
+    # Report seen and withheld results separately using the same episode summaries.
+    for group in ('seen', 'withheld'):
+        group_outcomes = [outcome for outcome in outcomes if outcome[group_key] == group]
+        group_metrics = _summarize_episodes(group_outcomes)
+        metrics[f'{group}_success_rate'] = group_metrics['success_rate']
+        metrics[f'{group}_average_extra_actions'] = group_metrics['average_extra_actions']
+        metrics[f'{group}_episode_count'] = len(group_outcomes)
+        for name in extra_metrics:
+            metrics[f'{group}_{name}'] = group_metrics[name]
+
+def evaluate_model(model:BaseAlgorithm, test_env:GridWorld, env_type:EnvType, num_episodes=25,
+                   eval_seed=100, is_eval_greedy:bool=False, record_episodes=False, eval_env_seed=10):
+    # Check the requested task and choose the evaluation instances.
+    if num_episodes <= 0:
+        raise ValueError('num_episodes must be positive')
+    if env_type != test_env.env_type:
+        raise ValueError('env_type must match the evaluation environment')
+
+    outcomes = []
+    episodes = []
+    panel, delivery_panel = _evaluation_panels(test_env, env_type, num_episodes, eval_env_seed)
+    # Evaluation gets its own action-sampling stream, leaving training randomness unchanged.
     with torch.random.fork_rng(devices=[]):
         torch.manual_seed(eval_seed)
         for episode_index in range(num_episodes):
@@ -181,29 +208,18 @@ def evaluate_model(model:BaseAlgorithm, test_env:GridWorld, env_type:EnvType, nu
             if episode is not None:
                 episodes.append(episode)
 
+    # Summarize the full panel and add task-specific seen and withheld results.
     metrics = _summarize_episodes(outcomes)
     if panel is not None:
-        for group in ('seen', 'withheld'):
-            group_metrics = _summarize_episodes([outcome for outcome in outcomes if outcome['goal_group'] == group])
-            metrics[f'{group}_success_rate'] = group_metrics['success_rate']
-            metrics[f'{group}_average_extra_actions'] = group_metrics['average_extra_actions']
-            metrics[f'{group}_episode_count'] = len([outcome for outcome in outcomes if outcome['goal_group'] == group])
-            if env_type == 'hacky-variable':
-                for name in ('shortcut_visit_rate', 'shortcut_success_rate', 'total_success_rate',
-                             'num_shortcut_completions', 'num_accepted_completions',
-                             'shortcut_average_extra_actions'):
-                    metrics[f'{group}_{name}'] = group_metrics[name]
+        extra_metrics = ('shortcut_visit_rate', 'shortcut_success_rate', 'total_success_rate',
+                         'num_shortcut_completions', 'num_accepted_completions',
+                         'shortcut_average_extra_actions') if env_type == 'hacky-variable' else ()
+        _add_group_metrics(metrics, outcomes, 'goal_group', extra_metrics)
         metrics['goal_panel'] = [{'goal': list(goal), 'group': group} for goal, group in panel]
     if delivery_panel is not None:
-        for group in ('seen', 'withheld'):
-            group_outcomes = [outcome for outcome in outcomes if outcome['pair_group'] == group]
-            group_metrics = _summarize_episodes(group_outcomes)
-            metrics[f'{group}_success_rate'] = group_metrics['success_rate']
-            metrics[f'{group}_average_extra_actions'] = group_metrics['average_extra_actions']
-            metrics[f'{group}_episode_count'] = len(group_outcomes)
-            for name in ('num_episodes_with_pickup', 'num_episodes_reaching_destination_with_package',
-                         'num_genuine_deliveries'):
-                metrics[f'{group}_{name}'] = group_metrics[name]
+        _add_group_metrics(metrics, outcomes, 'pair_group',
+                           ('num_episodes_with_pickup', 'num_episodes_reaching_destination_with_package',
+                            'num_genuine_deliveries'))
         metrics['delivery_panel'] = [{'package': list(pair[0]), 'destination': list(pair[1]), 'group': group}
                                      for pair, group in delivery_panel]
     return metrics, episodes

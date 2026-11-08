@@ -1,7 +1,7 @@
 import gymnasium as gym
 from typing import Literal
-from environment import Environment
-from task_splits import DeliverySplit, GoalSplit
+from rl_envs.environment import Environment
+from rl_envs.task_splits import DeliverySplit, GoalSplit
 import numpy as np
 
 EnvType = Literal["hacky-variable", "genuine-fixed", "genuine-variable", "pickup-and-deliver"]
@@ -49,14 +49,16 @@ class GridWorld(gym.Env):
         return positions[int(self.np_random.integers(len(positions)))]
 
     def reset(self, seed=None, options=None):
-        #this is a standard method in gymnasium that basically 'starts a new episode'
+        # Start a new episode using Gymnasium's random generator and any selected task instance.
         super().reset(seed=seed)
         self.env.reset(self.np_random, goal_pos=(options or {}).get('goal_pos'),
                        delivery_pair=(options or {}).get('delivery_pair'))
+        # During delivery training, optionally start near the destination while carrying the package.
         assisted = (self.assisted_start_probability > 0
                     and self.np_random.random() < self.assisted_start_probability)
         if assisted:
             self.env._set_assisted_delivery_start(self._choose_assisted_start())
+        # Convert the environment's observation to the fixed array expected by the policy.
         obs = self.env.agent_observation()
         obs_np, _ = self._map_obs_to_np(obs)
         info = {'assisted_start': assisted} if self.env_type == 'pickup-and-deliver' else {}
@@ -71,6 +73,7 @@ class GridWorld(gym.Env):
         - truncated: if we cutoff the agent's episode due to external reasons but we want it to use the value estimates in learning
         - info
         '''
+        # Translate the policy's action and return the result in Gymnasium's format.
         action = self._map_int_to_action(n_action)
         act_completed, reward, obs, terminated, truncated, info = self.env.agent_action(action)
         obs, _ = self._map_obs_to_np(obs)

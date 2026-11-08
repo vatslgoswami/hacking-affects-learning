@@ -65,6 +65,7 @@ def save_evaluation_episodes(evals_dir, n_timesteps, episodes, eval_seed, is_eva
     return path
 
 def save_run_config(RUN_DIR, settings, run_id):
+    # Save the environment, training settings and library versions with the run.
     config = {
         'run_id': run_id,
         'env_type' : settings["env_type"],
@@ -91,6 +92,7 @@ def save_run_config(RUN_DIR, settings, run_id):
         config['delivery_split'] = settings['delivery_split']
     if 'source_checkpoint' in settings:
         config['source_checkpoint'] = settings['source_checkpoint']
+    # Record the Git revision when the run is inside a repository.
     try:
         repo_dir = Path(__file__).resolve().parent
         config['code_revision'] = subprocess.check_output(

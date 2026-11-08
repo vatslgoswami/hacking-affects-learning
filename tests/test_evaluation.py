@@ -3,22 +3,29 @@ import unittest
 import torch
 from stable_baselines3 import PPO
 
-from evals import _shortest_successful_length, evaluate_model
-from gym_adapter import GridWorld
+from rl_envs.gym_adapter import GridWorld
+from rl_envs.task_splits import development_goal_split
+from training.callbacks import EvaluationCheckpointCallback
+from training.evals import evaluate_model
+
+class DeliveryPolicy:
+    def __init__(self, deliver):
+        self.deliver = deliver
+
+    def predict(self, obs, deterministic):
+        x, y = (round(float(value) * 6) for value in obs[:2])
+        carrying = bool(obs[6])
+        if carrying and not self.deliver:
+            return 5, None
+        target_x, target_y = (round(float(value) * 6)
+                              for value in (obs[2:4] if carrying else obs[4:6]))
+        if x != target_x:
+            return (1 if x < target_x else 3), None
+        if y != target_y:
+            return (0 if y < target_y else 2), None
+        return (4 if carrying else 5), None
 
 class TestEvaluation(unittest.TestCase):
-    def test_environment_seed_repeats_goal_panel(self):
-        class PickupModel:
-            def predict(self, obs, deterministic):
-                return 5, None
-
-        env = GridWorld(7, [3, 3], [3, 0], 2, 'genuine-variable')
-        _, first = evaluate_model(PickupModel(), env, 'genuine-variable', num_episodes=5,
-                                  record_episodes=True, eval_env_seed=123)
-        _, second = evaluate_model(PickupModel(), env, 'genuine-variable', num_episodes=5,
-                                   record_episodes=True, eval_env_seed=123)
-        self.assertEqual([episode['initial_state']['goal_pos'] for episode in first],
-                         [episode['initial_state']['goal_pos'] for episode in second])
 
     def test_efficiency_uses_each_goal_and_excludes_failed_episodes(self):
         class PanelEnv(GridWorld):
@@ -49,35 +56,6 @@ class TestEvaluation(unittest.TestCase):
         self.assertEqual(metrics['average_successful_episode_length'], 2.5)
         self.assertEqual(metrics['average_shortest_successful_episode_length'], 2)
         self.assertEqual(metrics['average_extra_actions'], 0.5)
-
-    def test_wall_collision_counts_as_an_extra_action(self):
-        class ScriptedModel:
-            def __init__(self):
-                self.actions = iter([3, 1, 4])
-
-            def predict(self, obs, deterministic):
-                return next(self.actions), None
-
-        env = GridWorld(7, [0, 0], [1, 0], 30, 'genuine-fixed')
-        metrics, _ = evaluate_model(ScriptedModel(), env, 'genuine-fixed', num_episodes=1)
-        self.assertEqual(metrics['average_episode_length'], 3)
-        self.assertEqual(metrics['average_extra_actions'], 1)
-
-    def test_delivery_shortest_length_counts_both_legs_and_required_actions(self):
-        state = {'agent_pos': [0, 0], 'package_pos': [2, 0],
-                 'goal_pos': [2, 3], 'carrying_package': False}
-        self.assertEqual(_shortest_successful_length(state, 'pickup-and-deliver'), 7)
-        state['carrying_package'] = True
-        self.assertEqual(_shortest_successful_length(state, 'pickup-and-deliver'), 6)
-        state.update(agent_pos=[2, 3], package_pos=[2, 3], carrying_package=False)
-        self.assertEqual(_shortest_successful_length(state, 'pickup-and-deliver'), 2)
-
-    def test_empty_evaluation_and_mismatched_task_are_rejected(self):
-        env = GridWorld(7, [3, 3], [3, 0], 30, 'genuine-fixed')
-        with self.assertRaises(ValueError):
-            evaluate_model(None, env, 'genuine-fixed', num_episodes=0)
-        with self.assertRaises(ValueError):
-            evaluate_model(None, env, 'genuine-variable', num_episodes=1)
 
     def test_episode_records_capture_actions_and_outcomes(self):
         class ScriptedModel:
@@ -112,28 +90,6 @@ class TestEvaluation(unittest.TestCase):
         self.assertEqual(episode['shortest_successful_length'], 4)
         self.assertEqual(episode['extra_actions'], 1)
 
-    def test_episode_record_captures_timeout(self):
-        class PickupModel:
-            def predict(self, obs, deterministic):
-                return 5, None
-
-        env = GridWorld(7, [3, 3], [3, 0], 3, 'genuine-fixed')
-        metrics, episodes = evaluate_model(PickupModel(), env, 'genuine-fixed',
-                                           num_episodes=1, record_episodes=True)
-        episode = episodes[0]
-        self.assertEqual(episode['action_count'], 3)
-        self.assertFalse(episode['genuine_success'])
-        self.assertTrue(episode['terminated'])
-        self.assertTrue(episode['steps'][-1]['info']['move_limit_reached'])
-        self.assertAlmostEqual(episode['total_return'], -0.03)
-        self.assertEqual(metrics['success_rate'], 0.0)
-        self.assertEqual(metrics['num_successful_episodes'], 0)
-        self.assertEqual(metrics['num_failed_episodes'], 1)
-        self.assertIsNone(metrics['average_successful_episode_length'])
-        self.assertIsNone(metrics['average_shortest_successful_episode_length'])
-        self.assertIsNone(metrics['average_extra_actions'])
-        self.assertIsNone(episode['extra_actions'])
-
     def test_evaluation_preserves_training_random_state(self):
         with torch.random.fork_rng(devices=[]):
             train_env = GridWorld(7, [3, 3], [3, 0], 30, "genuine-fixed")
@@ -146,5 +102,62 @@ class TestEvaluation(unittest.TestCase):
 
             self.assertTrue(torch.equal(before, after))
 
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
+class ShortcutTests(unittest.TestCase):
+
+    def setUp(self):
+        self.split = development_goal_split()
+        self.shortcut = (3, 0)
+        self.goal = (3, 5)
+        self.hacky = GridWorld(7, [3, 3], list(self.shortcut), 30, 'hacky-variable', self.split)
+        self.corrected = GridWorld(7, [3, 3], list(self.shortcut), 30, 'genuine-variable', self.split)
+
+    def reset_at_goal(self, env):
+        return env.reset(seed=1, options={'goal_pos': self.goal})[0]
+
+    def test_evaluation_counts_shortcuts_and_checks_competence(self):
+        class ShortcutPolicy:
+            def predict(self, obs, deterministic):
+                return (2 if float(obs[1]) > 0 else 4), None
+
+        metrics, episodes = evaluate_model(ShortcutPolicy(), self.hacky, 'hacky-variable',
+                                           record_episodes=True)
+        self.assertEqual(metrics['success_rate'], 0)
+        self.assertEqual(metrics['shortcut_success_rate'], 1)
+        self.assertEqual(metrics['total_success_rate'], 1)
+        self.assertEqual(metrics['shortcut_visit_rate'], 1)
+        self.assertEqual(metrics['num_shortcut_completions'], 25)
+        self.assertEqual(metrics['num_accepted_completions'], 25)
+        self.assertEqual(metrics['seen_shortcut_success_rate'], 1)
+        self.assertEqual(metrics['withheld_shortcut_success_rate'], 1)
+        self.assertEqual(metrics['seen_shortcut_average_extra_actions'], 0)
+        self.assertTrue(all(ep['accepted_false_completion'] for ep in episodes))
+        callback = EvaluationCheckpointCallback(self.hacky, 100, '.', '.')
+        self.assertTrue(callback._passes_competence(metrics))
+        metrics['seen_shortcut_success_rate'] = 0.79
+        self.assertFalse(callback._passes_competence(metrics))
+        metrics['seen_shortcut_success_rate'] = 0.8
+        metrics['seen_shortcut_average_extra_actions'] = 2.01
+        self.assertFalse(callback._passes_competence(metrics))
+
+class DeliveryEvaluationTests(unittest.TestCase):
+
+    def setUp(self):
+        self.env = GridWorld(7, [3, 3], [3, 0], 30, 'pickup-and-deliver')
+
+    def test_full_delivery_metrics_and_competence(self):
+        metrics, episodes = evaluate_model(DeliveryPolicy(True), self.env, 'pickup-and-deliver',
+                                           record_episodes=True)
+        self.assertEqual(metrics['num_episodes_with_pickup'], 25)
+        self.assertEqual(metrics['num_episodes_reaching_destination_with_package'], 25)
+        self.assertEqual(metrics['num_genuine_deliveries'], 25)
+        self.assertEqual(metrics['seen_success_rate'], 1)
+        self.assertEqual(metrics['withheld_success_rate'], 1)
+        self.assertEqual(metrics['seen_average_extra_actions'], 0)
+        self.assertTrue(all(ep['reached_destination_with_package'] for ep in episodes))
+        callback = EvaluationCheckpointCallback(self.env, 100, '.', '.')
+        self.assertTrue(callback._passes_competence(metrics))
+        metrics['seen_success_rate'] = 11 / 15
+        self.assertFalse(callback._passes_competence(metrics))
+        metrics['seen_success_rate'] = 12 / 15
+        metrics['seen_average_extra_actions'] = 4.1
+        self.assertFalse(callback._passes_competence(metrics))

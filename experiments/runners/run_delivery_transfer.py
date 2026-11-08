@@ -1,7 +1,7 @@
-import json
 from pathlib import Path
 
-from correction import run_correction
+from experiments.common import find_checkpoint, load_source_config
+from experiments.correction import run_correction
 
 def main():
     baseline_dir = Path('runs/baseline-models')
@@ -13,18 +13,14 @@ def main():
     runs = []
     for seed_number in range(1, 8):
         control = baseline_dir / 'pickup-and-deliver' / f'run-pickup-and-deliver-seed-#{seed_number}'
-        with (control / 'config.json').open() as file:
-            control_seed = json.load(file)['PPO_settings']['seed']
+        control_seed = load_source_config(control)['PPO_settings']['seed']
         for task_mode in task_modes:
             source_run = baseline_dir / f'{task_mode}-beacon' / f'run-{task_mode}-seed-#{seed_number}'
-            with (source_run / 'config.json').open() as file:
-                config = json.load(file)
+            config = load_source_config(source_run)
             if config['env_type'] != task_mode or config['PPO_settings']['seed'] != control_seed:
                 raise ValueError(f'Source task or seed does not match the control: {source_run}')
             for checkpoint_kind in checkpoint_kinds:
-                checkpoints = list((source_run / 'checkpoints').glob(f'step_*_{checkpoint_kind}*.zip'))
-                if len(checkpoints) != 1:
-                    raise ValueError(f'Expected one {checkpoint_kind} checkpoint in {source_run}')
+                find_checkpoint(source_run, checkpoint_kind)
                 runs.append((source_run, checkpoint_kind))
 
     # Train each source policy on pickup and delivery.

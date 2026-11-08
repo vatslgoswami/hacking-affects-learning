@@ -1,58 +1,19 @@
 import tempfile
 import unittest
-import hashlib
-import json
+from collections import defaultdict
 from pathlib import Path
-from unittest.mock import patch
 
+import numpy as np
 import torch
 from stable_baselines3 import PPO
 
-from demonstrations import make_demonstrations, optimal_actions, prepare_model, run_imitation
-from gym_adapter import GridWorld
-from mlp_architecture import SharedTrunk
-from run_demonstrations import (HEAD_CONDITIONS, HISTORIES, build_run_plan,
-                                build_correction_plan, run_demonstration_corrections)
-from task_splits import development_goal_split
+from experiments.demonstrations import (make_delivery_demonstrations, make_demonstrations,
+                                        optimal_actions, prepare_model, run_imitation)
+from rl_envs.gym_adapter import GridWorld
+from rl_envs.task_splits import development_delivery_split, development_goal_split
+from training.mlp_architecture import SharedTrunk
 
 class TestDemonstrations(unittest.TestCase):
-    def test_correction_uses_only_demonstrated_model(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            source = root / 'source'
-            source.mkdir()
-            checkpoint = source / 'source.zip'
-            checkpoint.write_bytes(b'original model')
-            (source / 'config.json').write_text(json.dumps({
-                'PPO_settings': {'seed': 7}, 'training_eval_loop_settings': {'eval_seed': 8}
-            }))
-            batch = root / 'batch'
-            demo_run = batch / 'demo'
-            demo_run.mkdir(parents=True)
-            dataset = b'fixed demonstration dataset'
-            dataset_hash = hashlib.sha256(dataset).hexdigest()
-            (batch / 'demonstrations.json').write_bytes(dataset)
-            (batch / 'config.json').write_text(json.dumps({
-                'demonstrations_sha256': dataset_hash, 'number_of_runs': 1
-            }))
-            demonstrated = demo_run / 'final_model.zip'
-            demonstrated.write_bytes(b'demonstrated model')
-            (demo_run / 'config.json').write_text(json.dumps({
-                'head_condition': 'intact', 'demonstrations_sha256': dataset_hash,
-                'checkpoint': str(checkpoint), 'checkpoint_sha256': hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
-                'source_run': str(source), 'seed': 7, 'eval_seed': 8, 'history': 'genuine-fixed',
-                'checkpoint_kind': 'final', 'updates': 1000,
-            }))
-            self.assertEqual(len(build_correction_plan(batch)), 1)
-            with patch('run_demonstrations.run_correction_from_checkpoint', return_value=root) as run:
-                run_demonstration_corrections(batch, 50_000)
-                self.assertEqual(run.call_count, 1)
-                self.assertEqual(run.call_args.args[0], demonstrated)
-                self.assertEqual(run.call_args.kwargs['condition'], 'demonstrations')
-                self.assertEqual(run.call_args.kwargs['training_budget'], 50_000)
-            checkpoint.write_bytes(b'changed model')
-            with self.assertRaises(ValueError):
-                build_correction_plan(batch)
 
     def test_examples_use_disjoint_goals_and_valid_expert_actions(self):
         data = make_demonstrations()
@@ -67,16 +28,6 @@ class TestDemonstrations(unittest.TestCase):
                 self.assertIn(row['action'], valid)
                 if row['position'] == row['goal']:
                     self.assertEqual(row['action'], 4)
-
-    def test_full_plan_includes_each_history_and_seed(self):
-        plan = build_run_plan(range(1, 8))
-        runs_per_seed = (2 * len(HISTORIES) + 1) * len(HEAD_CONDITIONS)
-        self.assertEqual(len(plan), 7 * runs_per_seed)
-        for number in range(1, 8):
-            items = [row for row in plan if row['seed_number'] == number]
-            self.assertEqual(len(items), runs_per_seed)
-            self.assertEqual(len({row['seed'] for row in items}), 1)
-            self.assertEqual(sum(row['history'] == 'fresh' for row in items), len(HEAD_CONDITIONS))
 
     def test_common_head_and_short_imitation_run(self):
         env = GridWorld(7, [3, 3], [3, 0], 30, 'genuine-fixed')
@@ -100,5 +51,39 @@ class TestDemonstrations(unittest.TestCase):
             self.assertTrue(torch.equal(saved.policy.value_net.weight, model.policy.value_net.weight))
             self.assertFalse(torch.equal(saved.policy.action_net.weight, model.policy.action_net.weight))
 
-if __name__ == '__main__':
-    unittest.main()
+class TestDeliveryDemonstrations(unittest.TestCase):
+
+    def test_expert_trajectories_are_valid_and_pairs_are_held_out(self):
+        data = make_delivery_demonstrations(num_episodes=8, seed=42)
+        self.assertEqual(data, make_delivery_demonstrations(num_episodes=8, seed=42))
+        split = development_delivery_split()
+        env = GridWorld(7, [3, 3], [3, 0], 30, 'pickup-and-deliver', delivery_split=split)
+        pair_groups = {}
+        for group, allowed in (('train', split.seen), ('heldout', split.withheld)):
+            trajectories = defaultdict(list)
+            for row in data[group]:
+                trajectories[row['episode']].append(row)
+            self.assertEqual(len(trajectories), 8)
+            pair_groups[group] = set()
+            for rows in trajectories.values():
+                package = tuple(rows[0]['package'])
+                destination = tuple(rows[0]['goal'])
+                pair = (package, destination)
+                self.assertIn(pair, allowed)
+                pair_groups[group].add(pair)
+                env.reset(seed=0, options={'delivery_pair': pair})
+                env.env._set_assisted_delivery_start(list(package))
+                env.env.action_count = sum(abs(a - b) for a, b in zip((3, 3), package)) + 1
+                for row in rows:
+                    self.assertEqual(row['position'], env.env.agent_pos)
+                    np.testing.assert_allclose(row['observation'], env.agent_observation())
+                    self.assertEqual(row['optimal_actions'], optimal_actions(row['position'], destination))
+                    self.assertIn(row['action'], row['optimal_actions'])
+                    self.assertTrue(env.env.carrying_package)
+                    _, _, terminated, _, info = env.step(row['action'])
+                self.assertTrue(terminated)
+                self.assertTrue(info['genuine_delivery'])
+                self.assertEqual(rows[-1]['action'], 4)
+            self.assertEqual(len(pair_groups[group]), 8)
+        self.assertTrue(pair_groups['train'].isdisjoint(pair_groups['heldout']))
+        env.close()

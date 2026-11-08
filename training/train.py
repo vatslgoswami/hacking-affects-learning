@@ -1,14 +1,7 @@
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
-from gym_adapter import GridWorld
-from task_splits import development_goal_split, development_delivery_split
-import time
-from typing import Literal
-from environment import EnvType
-from callbacks import DeliveryCurriculumCallback, EntropyScheduleCallback, EvaluationCheckpointCallback
-from mlp_architecture import SharedTrunk
-from plots import save_evaluation_plot, save_training_plots
-from utils import configure_training_logger, create_run_folder, save_run_config
+from rl_envs.gym_adapter import GridWorld
+from training.callbacks import DeliveryCurriculumCallback, EntropyScheduleCallback, EvaluationCheckpointCallback
 
 def _check_training_environments(model, test_env):
     # Training and evaluation must come from the same 'seen'/'witheld' or train/test split.
@@ -99,63 +92,3 @@ def get_run_settings(model:PPO, env:GridWorld, train_eval_loop_settings):
         }
 
     return env_settings | model_settings
-
-if __name__=="__main__":
-    #new seeds frozen for the experiment
-    seeds = [(7,8),(9,10),(11, 12),(13, 14),(15,16),(17,18), (19,20)]
-    task_modes:list[EnvType] = ["pickup-and-deliver"]
-    for task_mode in task_modes:
-        for (model_sd, eval_sd) in seeds:
-            model_seed = model_sd
-            eval_seed = eval_sd
-            training_budget = 300_000 if task_mode=="pickup-and-deliver" else 75_000
-            max_actions = 30
-
-            delivery_curriculum = {
-                'initial_probability': 0.5,
-                'decay_fraction': 0.5,
-                'max_distance': 2,
-            } if task_mode=="pickup-and-deliver" else None
-
-            entropy_schedule = {
-                'initial_coef': 0.1,
-                'final_coef': 0.01,
-                'decay_fraction': 0.35,
-            }
-
-            goal_split = development_goal_split() if task_mode=="genuine-variable" or task_mode=="hacky-variable" else None
-            delivery_split = development_delivery_split() if task_mode=="pickup-and-deliver" else None
-    
-            train_env = GridWorld(7, [3,3], [3,0], max_actions, task_mode, goal_split=goal_split, delivery_split=delivery_split)
-            test_env = GridWorld(7, [3,3], [3,0], max_actions, task_mode, goal_split=goal_split, delivery_split=delivery_split)
-
-            model = PPO(
-                "MlpPolicy", 
-                train_env, 
-                gamma=1,
-                verbose=2,
-                device="cpu",
-                seed=model_seed,
-                ent_coef=entropy_schedule['initial_coef'],
-                policy_kwargs={
-                    'features_extractor_class': SharedTrunk,
-                    'net_arch': dict(pi=[], vf = []),
-                }
-            )
-
-            run_id = f'{train_env.env_type}-{time.ctime()}'
-            BASE_DIR = './runs'
-            run_dir, checkpoints_dir, evals_dir, plots_dir = create_run_folder(BASE_DIR, run_id)
-            logger = configure_training_logger(model, run_dir)
-            #run the train_eval_loop
-            try:
-                model, train_eval_loop_settings = train_and_eval_loop(model, test_env, training_budget, eval_seed, checkpoints_dir, evals_dir,
-                                                                    delivery_curriculum=delivery_curriculum,
-                                                                    entropy_schedule=entropy_schedule)
-                settings = get_run_settings(model, train_env, train_eval_loop_settings)
-                save_run_config(run_dir, settings, run_id)
-                print(f'Saved evaluation plot: {save_evaluation_plot(run_dir)}')
-                for plot_path in save_training_plots(run_dir):
-                    print(f'Saved training plot: {plot_path}')
-            finally:
-                logger.close()

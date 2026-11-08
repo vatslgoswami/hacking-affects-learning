@@ -8,9 +8,10 @@ import torch
 import torch.nn.functional as F
 from stable_baselines3 import PPO
 
-from evals import evaluate_model
-from gym_adapter import GridWorld
-from task_splits import development_delivery_split, development_goal_split
+from training.evals import evaluate_model
+from rl_envs.gym_adapter import GridWorld
+from rl_envs.task_splits import development_delivery_split, development_goal_split
+from training.mlp_architecture import reset_action_head
 
 STARTS = ((3, 3), (3, 0), (3, 1), (2, 0), (4, 0),
           (0, 0), (0, 6), (6, 0), (6, 6))
@@ -34,6 +35,7 @@ def optimal_actions(position, goal):
     return actions
 
 def make_demonstrations():
+    # Set up a variable-goal environment and separate training and held-out examples.
     split = development_goal_split()
     env = GridWorld(7, [3, 3], [3, 0], 30, 'genuine-variable', goal_split=split)
     data = {'train': [], 'heldout': []}
@@ -44,6 +46,7 @@ def make_demonstrations():
                 for start in (*STARTS, goal):
                     env.reset(seed=0, options={'goal_pos': goal})
                     env.env.agent_pos = list(start)
+                    # Follow the expert until it claims the goal or runs out of moves.
                     for _ in range(env.env.max_actions):
                         position = tuple(env.env.agent_pos)
                         valid = optimal_actions(position, goal)
@@ -65,6 +68,7 @@ def make_demonstrations():
     return data
 
 def make_delivery_demonstrations(num_episodes=100, seed=2026):
+    # Sample delivery pairs reproducibly from the seen and withheld splits.
     split = development_delivery_split()
     if num_episodes < 1 or num_episodes > min(len(split.seen), len(split.withheld)):
         raise ValueError('demonstration count must fit in both delivery splits')
@@ -81,6 +85,7 @@ def make_delivery_demonstrations(num_episodes=100, seed=2026):
                 # Start immediately after the shortest path to pickup.
                 env.env._set_assisted_delivery_start(list(package))
                 env.env.action_count = sum(abs(a - b) for a, b in zip((3, 3), package)) + 1
+                # Record the shortest delivery path after the package has been picked up.
                 for _ in range(env.env.max_actions):
                     position = tuple(env.env.agent_pos)
                     valid = optimal_actions(position, destination)
@@ -111,10 +116,7 @@ def prepare_model(checkpoint, head_condition, seed):
     model = PPO.load(checkpoint, device='cpu')
     if head_condition == 'fresh':
         # Give every history in the seed block the same new action head.
-        with torch.random.fork_rng(devices=[]):
-            torch.manual_seed(seed)
-            torch.nn.init.orthogonal_(model.policy.action_net.weight, gain=0.01)
-            torch.nn.init.zeros_(model.policy.action_net.bias)
+        reset_action_head(model, seed)
     elif head_condition != 'intact':
         raise ValueError('head condition must be intact or fresh')
     return model
@@ -146,6 +148,7 @@ def run_imitation(checkpoint, data, output_dir, *, seed, eval_seed, metadata,
                   head_condition='intact', updates=1000, batch_size=64,
                   learning_rate=0.0003, eval_interval=100,
                   target_task: Literal['genuine-variable', 'pickup-and-deliver']='genuine-variable'):
+    # Load the source policy and prepare the shared training and held-out examples.
     if updates < 1 or batch_size < 1 or eval_interval < 1:
         raise ValueError('updates, batch size and evaluation interval must be positive')
     output_dir = Path(output_dir)
@@ -157,6 +160,7 @@ def run_imitation(checkpoint, data, output_dir, *, seed, eval_seed, metadata,
     optimizer = torch.optim.Adam(model.policy.parameters(), lr=learning_rate, eps=1e-5)
     model.policy.optimizer = optimizer
     rng = np.random.default_rng(seed)
+    # Evaluate the trained policy on full episodes of the selected task.
     if target_task == 'genuine-variable':
         eval_env = GridWorld(7, [3, 3], [3, 0], 30, 'genuine-variable',
                              goal_split=development_goal_split())
@@ -167,6 +171,7 @@ def run_imitation(checkpoint, data, output_dir, *, seed, eval_seed, metadata,
         raise ValueError('unsupported imitation task')
     history = []
     try:
+        # Alternate supervised updates with held-out and rollout evaluations.
         for update in range(updates + 1):
             if update % eval_interval == 0 or update == updates:
                 # Evaluate without training on the held-out goals.
@@ -189,6 +194,7 @@ def run_imitation(checkpoint, data, output_dir, *, seed, eval_seed, metadata,
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
+        # Save the trained policy, learning metrics and the source details needed to reproduce it.
         model.save(output_dir / 'final_model.zip')
         config = {
             **metadata, 'seed': seed, 'eval_seed': eval_seed, 'eval_env_seed': 10,

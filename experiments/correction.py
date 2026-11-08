@@ -1,6 +1,5 @@
 import argparse
 import hashlib
-import json
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
@@ -8,23 +7,20 @@ from typing import Literal
 import torch
 from stable_baselines3 import PPO
 
-from gym_adapter import GridWorld
+from rl_envs.gym_adapter import GridWorld
 from plots import save_evaluation_plot, save_training_plots
-from task_splits import GoalSplit, development_delivery_split, development_goal_split
-from train import get_run_settings, train_and_eval_loop
+from rl_envs.task_splits import GoalSplit, development_delivery_split, development_goal_split
+from experiments.common import find_checkpoint, load_source_config
+from experiments.settings import CORRECTION_BUDGET, DELIVERY_BUDGET, DELIVERY_CURRICULUM, ENTROPY_SCHEDULE
+from training.mlp_architecture import reset_action_head as reset_policy_action_head
+from training.train import get_run_settings, train_and_eval_loop
 from utils import configure_training_logger, create_run_folder, save_run_config
-
-CORRECTION_BUDGET = 200_000
-DELIVERY_BUDGET = 300_000
-ENTROPY_SCHEDULE = {'initial_coef': 0.1, 'final_coef': 0.01, 'decay_fraction': 0.35}
-DELIVERY_CURRICULUM = {'initial_probability': 0.5, 'decay_fraction': 0.5, 'max_distance': 2}
 
 def _load_source_settings(source_run, checkpoint):
     # Check that the selected checkpoint belongs to a supported source task.
     if not checkpoint.is_file():
         raise FileNotFoundError(checkpoint)
-    with (source_run / 'config.json').open() as file:
-        config = json.load(file)
+    config = load_source_config(source_run)
     if config['env_type'] not in ('genuine-fixed', 'genuine-variable', 'hacky-variable'):
         raise ValueError('choose a beacon source run')
     return config
@@ -68,10 +64,7 @@ def prepare_correction_model(checkpoint, train_env, seed, reset_action_head=Fals
 
     if reset_action_head:
         # Replace the action preferences while keeping the policy's earlier layers.
-        with torch.random.fork_rng(devices=[]):
-            torch.manual_seed(seed)
-            torch.nn.init.orthogonal_(model.policy.action_net.weight, gain=0.01)
-            torch.nn.init.zeros_(model.policy.action_net.bias)
+        reset_policy_action_head(model, seed)
 
     # Start optimization and PPO updates afresh while keeping the policy weights.
     model.policy.optimizer = model.policy.optimizer_class(
@@ -114,6 +107,7 @@ def run_correction_from_checkpoint(checkpoint, source_run, *, history, checkpoin
     model = prepare_correction_model(checkpoint, train_env, seed, reset_action_head)
     source_timesteps = model.num_timesteps
 
+    # Create a separate output folder and logger for this follow-up run.
     branch = 'ppo_transfer' if target_task == 'pickup-and-deliver' else 'ppo_correction'
     run_id = f'{branch}-{history}-{checkpoint_kind}-seed-{seed}-{datetime.now():%Y%m%d-%H%M%S-%f}'
     run_dir, checkpoints_dir, evals_dir, _ = create_run_folder(output_dir, run_id)
@@ -131,6 +125,7 @@ def run_correction_from_checkpoint(checkpoint, source_run, *, history, checkpoin
             entropy_schedule=ENTROPY_SCHEDULE, delivery_curriculum=delivery_curriculum,
             reset_num_timesteps=True,
         )
+        # Record which source model and reset choices produced these results.
         source_details: dict[str, object] = {
             'history': history,
             'source_run': str(source_run),
@@ -147,8 +142,10 @@ def run_correction_from_checkpoint(checkpoint, source_run, *, history, checkpoin
         }
         if lineage is not None:
             source_details['demonstration_lineage'] = lineage
+        # Save the settings and plots after the training loop finishes.
         _save_follow_up_results(run_dir, run_id, model, train_env, loop_settings, source_details)
     finally:
+        # Release the logger and both environments even if training fails.
         logger.close()
         train_env.close()
         test_env.close()
@@ -156,23 +153,20 @@ def run_correction_from_checkpoint(checkpoint, source_run, *, history, checkpoin
 
 def run_correction(source_run, fresh=False, output_dir='runs', checkpoint_kind='final',
                    target_task: Literal['genuine-variable', 'pickup-and-deliver']='genuine-variable'):
+    # Find the requested source checkpoint before starting the follow-up run.
     source_run = Path(source_run)
-    with (source_run / 'config.json').open() as file:
-        source_type = json.load(file)['env_type']
+    source_type = load_source_config(source_run)['env_type']
     if checkpoint_kind not in ('reliable', 'final'):
         raise ValueError('checkpoint kind must be reliable or final')
-    checkpoints = source_run / 'checkpoints'
-    matches = ([checkpoints / 'step_0.zip'] if fresh
-               else list(checkpoints.glob(f'step_*_{checkpoint_kind}*.zip')))
-    if len(matches) != 1 or not matches[0].is_file():
-        raise ValueError(f'expected exactly one source checkpoint in {checkpoints}')
+    checkpoint = find_checkpoint(source_run, 'initial' if fresh else checkpoint_kind)
     return run_correction_from_checkpoint(
-        matches[0], source_run, history='fresh' if fresh else source_type,
+        checkpoint, source_run, history='fresh' if fresh else source_type,
         checkpoint_kind='initial' if fresh else checkpoint_kind, output_dir=output_dir,
         target_task=target_task,
     )
 
 def main():
+    # Turn the command line choices into one correction or delivery transfer run.
     parser = argparse.ArgumentParser(description='Train a source policy on a follow-up task.')
     parser.add_argument('source_run', type=Path, help='Folder containing a beacon source run')
     parser.add_argument('--fresh', action='store_true', help='Start from this run’s initial checkpoint')

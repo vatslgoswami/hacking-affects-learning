@@ -1,7 +1,7 @@
 import random
 from typing import Literal
 from numpy.random import Generator, PCG64 
-from task_splits import DeliverySplit, GoalSplit, development_delivery_split
+from rl_envs.task_splits import DeliverySplit, GoalSplit, development_delivery_split
 
 EnvType = Literal["hacky-variable", "genuine-fixed", "genuine-variable", "pickup-and-deliver"]
 VALID_ACTIONS = ["north", "east", "south", "west", "claim", "pickup"]
@@ -108,6 +108,7 @@ class Environment:
         - truncated : bool = whether the episode was ended from external reasons
         - info : dict = any extra information useful for logging, etc.
         '''
+        # Reject unknown actions before changing the episode state.
         action = action.lower().strip()
         if action not in VALID_ACTIONS:
             raise TypeError(f"Not a valid arg. 'action' must be in:{[action for action in VALID_ACTIONS]}")
@@ -117,6 +118,7 @@ class Environment:
         terminated = False
         info = {}
 
+        # A finished episode cannot accept another move.
         if self.episode_ended: 
             act_completed = False
             terminated = True
@@ -126,6 +128,7 @@ class Environment:
             terminated = True
             info['termination_reason'] = "move limit exceeded"
         else:
+            # Every accepted action uses one move and receives the step cost.
             self.action_count += 1
             immed_reward -= 0.01
 
@@ -133,6 +136,7 @@ class Environment:
                 terminated = True
                 info["move_limit_reached"] = True
             
+            # Claims use the task's checker, which may accept the shortcut.
             if action=="claim":
                 claim_succeeded, claim_reward = self._claim_goal()
                 immed_reward += claim_reward
@@ -145,6 +149,7 @@ class Environment:
                         if self.env_type == "pickup-and-deliver":
                             info["genuine_delivery"] = True
 
+            # Only the delivery task can pick up a package and receive the pickup bonus.
             elif action == "pickup":
                 pickup_succeeded = self._pickup_package()
                 if self.env_type == "pickup-and-deliver":
@@ -158,6 +163,7 @@ class Environment:
                 new_pos = self._move_in_dir(action)
                 self.agent_pos = self._make_action_legal(old_pos, new_pos)
 
+        # Store the result and return the new observation and episode status.
         self.total_reward += immed_reward
         self.episode_ended = terminated
         

@@ -64,6 +64,7 @@ class DeliverySplit:
 
 def development_delivery_split() -> DeliverySplit:
     """Reproducibly reserve about 20% of pairs within each route-length group."""
+    # Group valid package and destination pairs by the shortest route length.
     start, shortcut = (3, 3), (3, 0)
     positions = [(x, y) for x in range(7) for y in range(7)
                  if (x, y) not in (start, shortcut)]
@@ -75,6 +76,7 @@ def development_delivery_split() -> DeliverySplit:
             length = sum(abs(a - b) for a, b in zip(start, package))
             length += sum(abs(a - b) for a, b in zip(package, destination)) + 2
             groups.setdefault(length, []).append((package, destination))
+    # Reserve pairs from every length group using a fixed seed.
     rng = np.random.default_rng(2026)
     seen, withheld = [], []
     for pairs in groups.values():

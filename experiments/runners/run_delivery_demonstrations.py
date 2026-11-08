@@ -4,8 +4,10 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from correction import DELIVERY_BUDGET, DELIVERY_CURRICULUM, ENTROPY_SCHEDULE, run_correction_from_checkpoint
-from demonstrations import make_delivery_demonstrations, run_imitation, save_demonstrations
+from experiments.common import find_checkpoint, load_source_config
+from experiments.correction import run_correction_from_checkpoint
+from experiments.demonstrations import make_delivery_demonstrations, run_imitation, save_demonstrations
+from experiments.settings import DELIVERY_BUDGET, DELIVERY_CURRICULUM, ENTROPY_SCHEDULE
 from plots import save_delivery_demonstration_comparisons, save_demonstration_plots
 
 BASELINE_DIR = Path('runs/baseline-models')
@@ -24,19 +26,17 @@ def build_run_plan(seed_numbers):
         key = (source['history'], source['checkpoint_kind'], config['PPO_settings']['seed'])
         transfers.setdefault(key, []).append((path.parent, config))
 
+    # Verify each source checkpoint and its matched transfer used the same settings.
     runs = []
     for number in seed_numbers:
         for history in HISTORIES:
             source_run = BASELINE_DIR / f'{history}-beacon' / f'run-{history}-seed-#{number}'
-            config = json.loads((source_run / 'config.json').read_text())
+            config = load_source_config(source_run)
             seed = config['PPO_settings']['seed']
             if config['env_type'] != history:
                 raise ValueError(f'incorrect source history in {source_run}')
             for kind in CHECKPOINTS:
-                paths = list((source_run / 'checkpoints').glob(f'step_*_{kind}*.zip'))
-                if len(paths) != 1:
-                    raise ValueError(f'expected one {kind} checkpoint in {source_run}')
-                checkpoint = paths[0]
+                checkpoint = find_checkpoint(source_run, kind)
                 source_hash = hashlib.sha256(checkpoint.read_bytes()).hexdigest()
                 matches = transfers.get((history, kind, seed), [])
                 if len(matches) != 1:
@@ -109,6 +109,7 @@ def run_delivery_ppo(plan, batch_dir):
                 or not (demo_dir / 'final_model.zip').is_file()):
             raise ValueError(f'imitation model does not match {name}')
 
+    # Create a separate batch for the follow-up PPO runs and their comparisons.
     output_dir = batch_dir / 'ppo_transfer' / f'batch-{datetime.now():%Y%m%d-%H%M%S-%f}'
     output_dir.mkdir(parents=True, exist_ok=False)
     (output_dir / 'config.json').write_text(json.dumps({
@@ -116,6 +117,7 @@ def run_delivery_ppo(plan, batch_dir):
         'demonstration_batch': str(batch_dir), 'number_of_runs': len(plan),
         'demonstrations_sha256': data_hash,
     }, indent=2))
+    # Continue each demonstrated model and pair its results with the original transfer.
     comparisons = []
     for number, run in enumerate(plan, 1):
         name = f"{run['history']}-{run['checkpoint_kind']}-intact-seed-{run['seed']}"
@@ -138,6 +140,7 @@ def run_delivery_ppo(plan, batch_dir):
     return output_dir
 
 def main():
+    # Parse the batch settings and select new imitation runs or an existing batch.
     parser = argparse.ArgumentParser(description='Teach the delivery stage, then run PPO.')
     parser.add_argument('--seeds', type=int, nargs='+', default=list(range(1, 8)),
                         help='Baseline folder labels (default: 1 through 7)')

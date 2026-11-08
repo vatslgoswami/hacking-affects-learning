@@ -6,6 +6,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 def load_evaluation_summaries(run_dir):
+    # Read and order the saved evaluations so each curve follows training time.
     evaluations_dir = Path(run_dir) / 'evaluations'
     paths = list(evaluations_dir.glob('step_*.json'))
     if not paths:
@@ -21,6 +22,7 @@ def load_evaluation_summaries(run_dir):
     return summaries
 
 def create_evaluation_figure(summaries, run_name, config=None):
+    # Collect evaluation settings for the plot title and labels.
     steps = [summary['n_timesteps'] for summary in summaries]
     episode_counts = {summary['eval_episode_count'] for summary in summaries}
     eval_seeds = {summary['eval_seed'] for summary in summaries}
@@ -38,6 +40,7 @@ def create_evaluation_figure(summaries, run_name, config=None):
         fontsize=9,
     )
 
+    # Plot genuine success, mean return and episode length for the full panel.
     metrics = [
         ('success_rate', 'Genuine success rate', '#526bf4'),
         ('average_return', 'Mean episode return', '#d77a2e'),
@@ -50,6 +53,7 @@ def create_evaluation_figure(summaries, run_name, config=None):
                   label=success_label if key == 'success_rate' else None)
         axis.set_ylabel(axis_label)
         axis.grid(True, alpha=0.25)
+    # Add seen, withheld and shortcut curves when those measurements are available.
     if any('seen_success_rate' in summary for summary in summaries):
         shortcut_metrics = any('shortcut_success_rate' in summary for summary in summaries)
         axes[0].plot(steps, [summary.get('seen_success_rate') for summary in summaries],
@@ -64,6 +68,7 @@ def create_evaluation_figure(summaries, run_name, config=None):
         axes[0].plot(steps, [summary.get('total_success_rate') for summary in summaries],
                      marker='o', color='#475166', linestyle='--', label='Total accepted')
         axes[0].legend(fontsize=8)
+    # Mark the evaluation where competence was confirmed as reliable.
     reliable_step = next((s['n_timesteps'] for s in summaries
                           if s.get('competence', {}).get('is_reliable_checkpoint')), None)
     if reliable_step is not None:
@@ -74,6 +79,7 @@ def create_evaluation_figure(summaries, run_name, config=None):
     axes[0].set_ylim(-0.03, 1.03)
     axes[-1].set_xlabel('Training transitions')
 
+    # Show the shortest-route reference for the standard fixed-goal board.
     if config and config.get('env_type') == 'genuine-fixed':
         start = config.get('start_pos')
         goal = config.get('fixed_goal_pos')
@@ -99,6 +105,7 @@ def save_evaluation_plot(run_dir):
     return output
 
 def load_training_diagnostics(run_dir):
+    # Read PPO update metrics from the training log and order them by step.
     path = Path(run_dir) / 'progress.csv'
     with path.open(newline='') as file:
         rows = list(csv.DictReader(file))
@@ -115,6 +122,7 @@ def load_training_diagnostics(run_dir):
     return metrics
 
 def create_training_figures(metrics, run_name, model_seed='unknown', reliable_step=None):
+    # Put policy and value loss together, then draw entropy loss separately.
     losses, loss_axis = plt.subplots(figsize=(9, 5), layout='constrained')
     for key, label, color in (
         ('train/policy_gradient_loss', 'Policy loss', '#526bf4'),
@@ -135,6 +143,7 @@ def create_training_figures(metrics, run_name, model_seed='unknown', reliable_st
     entropy_axis.set_xlabel('Training transitions at update')
     entropy_axis.set_ylabel('Entropy loss (negative entropy)')
     entropy_axis.grid(True, alpha=0.25)
+    # Mark the reliable checkpoint on both figures when one was reached.
     if reliable_step is not None:
         for axis in (loss_axis, entropy_axis):
             axis.axvline(reliable_step, color='#b34684', linestyle=':',
@@ -143,6 +152,7 @@ def create_training_figures(metrics, run_name, model_seed='unknown', reliable_st
     return losses, entropy
 
 def save_training_plots(run_dir):
+    # Load the logged losses and find the reliable checkpoint for the plot markers.
     run_dir = Path(run_dir)
     metrics = load_training_diagnostics(run_dir)
     config_path = run_dir / 'config.json'
@@ -156,6 +166,7 @@ def save_training_plots(run_dir):
                                   if s.get('competence', {}).get('is_reliable_checkpoint')), None)
         except ValueError:
             pass
+    # Save both figures and close them to release plotting resources.
     losses, entropy = create_training_figures(metrics, run_dir.name, seed, reliable_step)
     outputs = (run_dir / 'plots' / 'policy_value_loss.png',
                run_dir / 'plots' / 'entropy_loss.png')
@@ -176,6 +187,7 @@ def save_demonstration_plots(batch_dir, results, histories, checkpoint_kinds, he
         for head in head_conditions:
             fig, axes = plt.subplots(1, 2, figsize=(11, 4), layout='constrained')
             try:
+                # Average each history across seeds for this checkpoint and head condition.
                 for history in (*histories, 'fresh'):
                     selected = [item for item in results if item['history'] == history
                                 and item['head'] == head
@@ -215,6 +227,7 @@ def save_demonstration_correction_plots(batch_dir):
         runs.append({'history': source['history'], 'kind': source['checkpoint_kind'],
                      'condition': source['condition'],
                      'metrics': load_evaluation_summaries(config_path.parent)})
+    # Group matching histories and plot their mean correction curves.
     colors = {'hacky-variable': '#b34684', 'genuine-fixed': '#526bf4',
               'genuine-variable': '#25866c', 'fresh': '#d77a2e'}
     outputs = []
@@ -262,6 +275,7 @@ def save_delivery_demonstration_comparisons(batch_dir, runs):
                 selected = [run for run in runs if run['history'] == history and run['checkpoint_kind'] == kind]
                 if not selected:
                     continue
+                # Plot the average before and after demonstrations for the same source group.
                 for condition, style in (('without', '--'), ('with', '-')):
                     panels = [load_evaluation_summaries(run[condition]) for run in selected]
                     steps = [row['n_timesteps'] for row in panels[0]]

@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from correction import run_correction_from_checkpoint
+from experiments.common import find_checkpoint
+from experiments.correction import run_correction_from_checkpoint
 
 def main():
     baseline_dir = Path('runs/baseline-models/hacky-variable-beacon')
@@ -13,10 +14,8 @@ def main():
         if not (source / 'config.json').is_file():
             raise FileNotFoundError(f'Missing source configuration: {source}')
         for kind in ('reliable', 'final'):
-            checkpoints = list((source / 'checkpoints').glob(f'step_*_{kind}*.zip'))
-            if len(checkpoints) != 1:
-                raise ValueError(f'Expected one {kind} checkpoint in {source}')
-            runs.append((source, kind, checkpoints[0]))
+            checkpoint = find_checkpoint(source, kind)
+            runs.append((source, kind, checkpoint))
 
     # Train each reset policy on the genuine-variable task.
     for number, (source, kind, checkpoint) in enumerate(runs, start=1):

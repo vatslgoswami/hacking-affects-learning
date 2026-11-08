@@ -1,6 +1,7 @@
 from pathlib import Path
 
-from correction import run_correction
+from experiments.correction import run_correction
+from experiments.common import find_checkpoint
 
 def main():
     baseline_dir = Path('runs/baseline-models')
@@ -15,9 +16,7 @@ def main():
             if not (source_run / 'config.json').is_file():
                 raise FileNotFoundError(f'Missing source configuration: {source_run}')
             for checkpoint_kind in checkpoint_kinds:
-                checkpoints = list((source_run / 'checkpoints').glob(f'step_*_{checkpoint_kind}*.zip'))
-                if len(checkpoints) != 1:
-                    raise ValueError(f'Expected one {checkpoint_kind} checkpoint in {source_run}')
+                find_checkpoint(source_run, checkpoint_kind)
                 runs.append((source_run, checkpoint_kind))
 
     # Train one correction run for each source checkpoint.

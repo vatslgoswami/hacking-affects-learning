@@ -7,7 +7,7 @@ from typing import Any
 import pygame
 from numpy.random import default_rng
 
-from environment import Environment
+from rl_envs.environment import Environment
 
 from board_rendering import BOARD_SIZE, HEIGHT, WIDTH, draw
 
@@ -59,6 +59,7 @@ class ReplaySession:
         return 'Episode ended'
 
     def restart(self):
+        # Rebuild the initial board state from the selected recorded episode.
         initial = self.episode['initial_state']
         self.env = SimpleNamespace(agent_pos=list(initial['agent_pos']),
                                    goal_pos=list(initial['goal_pos']),
@@ -87,6 +88,7 @@ class ReplaySession:
             self.restart()
 
     def advance(self):
+        # Apply one recorded state so playback follows the original episode.
         if self.finished:
             return
         step = self.episode['steps'][self.step_index]
@@ -101,11 +103,13 @@ class ReplaySession:
         self.last_action = step['action_name']
         self.last_reward = step['reward']
         self.step_index += 1
+        # Extend the visible path only when the agent moves to another cell.
         position = tuple(self.env.agent_pos)
         if position != self.path[-1]:
             self.path.append(position)
 
     def update(self, elapsed_seconds):
+        # Advance at the chosen speed, or pause between episodes when one finishes.
         if self.paused:
             return
         self.elapsed += elapsed_seconds
@@ -123,6 +127,7 @@ class ReplaySession:
             self.advance()
 
 def load_replays(run_dir, checkpoints, episode_index=0):
+    # Read the selected episode records and reject mismatched checkpoint files.
     run_dir = Path(run_dir)
     if not checkpoints:
         raise ValueError('No saved episode checkpoints found')
@@ -142,6 +147,42 @@ def load_replays(run_dir, checkpoints, episode_index=0):
 
 def load_replay(run_dir, checkpoint, episode_index=0):
     return load_replays(run_dir, [checkpoint], episode_index)
+
+def _handle_replay_key(replay, key):
+    # Change playback state without changing the recorded episodes.
+    if key == pygame.K_SPACE:
+        replay.paused = not replay.paused
+    elif key == pygame.K_LEFT:
+        replay.select_episode(replay.episode_index - 1)
+    elif key == pygame.K_RIGHT:
+        replay.select_episode(replay.episode_index + 1)
+    elif key == pygame.K_LEFTBRACKET:
+        replay.select_checkpoint(replay.checkpoint_index - 1)
+    elif key == pygame.K_RIGHTBRACKET:
+        replay.select_checkpoint(replay.checkpoint_index + 1)
+    elif key == pygame.K_UP:
+        replay.speed_index = min(replay.speed_index + 1, len(replay.speeds) - 1)
+    elif key == pygame.K_DOWN:
+        replay.speed_index = max(replay.speed_index - 1, 0)
+    elif key == pygame.K_a:
+        replay.play_all = not replay.play_all
+    elif key == pygame.K_r:
+        replay.restart()
+
+def _handle_manual_key(env, rng, key, actions, last_action, last_reward, path):
+    # Reset the board or apply one manual action and extend the visible path.
+    if key == pygame.K_r:
+        env.reset(rng)
+        return None, 0.0, [tuple(env.agent_pos)]
+    if key in actions:
+        action = actions[key]
+        accepted, reward, _, _, _, _ = env.agent_action(action)
+        if accepted:
+            position = tuple(env.agent_pos)
+            if position != path[-1]:
+                path.append(position)
+            return action, reward, path
+    return last_action, last_reward, path
 
 def main():
     parser = argparse.ArgumentParser(description='Play the board manually or replay a saved evaluation.')
@@ -163,6 +204,7 @@ def main():
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
         parser.error(str(error))
 
+    # Prepare the window and the manual board used when no replay is selected.
     pygame.init()
     surface = pygame.display.set_mode((WIDTH, HEIGHT))
     pygame.display.set_caption("Beacon navigation")
@@ -177,6 +219,7 @@ def main():
     path = [tuple(env.agent_pos)]
     clock = pygame.time.Clock()
     running = True
+    # Handle input, advance playback and draw the current state each frame.
     while running:
         elapsed_seconds = clock.tick(60) / 1000
         for event in pygame.event.get():
@@ -184,38 +227,10 @@ def main():
                 running = False
             elif event.type == pygame.KEYDOWN:
                 if replay:
-                    if event.key == pygame.K_SPACE:
-                        replay.paused = not replay.paused
-                    elif event.key == pygame.K_LEFT:
-                        replay.select_episode(replay.episode_index - 1)
-                    elif event.key == pygame.K_RIGHT:
-                        replay.select_episode(replay.episode_index + 1)
-                    elif event.key == pygame.K_LEFTBRACKET:
-                        replay.select_checkpoint(replay.checkpoint_index - 1)
-                    elif event.key == pygame.K_RIGHTBRACKET:
-                        replay.select_checkpoint(replay.checkpoint_index + 1)
-                    elif event.key == pygame.K_UP:
-                        replay.speed_index = min(replay.speed_index + 1, len(replay.speeds) - 1)
-                    elif event.key == pygame.K_DOWN:
-                        replay.speed_index = max(replay.speed_index - 1, 0)
-                    elif event.key == pygame.K_a:
-                        replay.play_all = not replay.play_all
-                    elif event.key == pygame.K_r:
-                        replay.restart()
-                elif event.key == pygame.K_r:
-                    env.reset(rng)
-                    last_action = None
-                    last_reward = 0.0
-                    path = [tuple(env.agent_pos)]
-                elif event.key in actions:
-                    action = actions[event.key]
-                    accepted, reward, _, _, _, _ = env.agent_action(action)
-                    if accepted:
-                        last_action = action
-                        last_reward = reward
-                        position = tuple(env.agent_pos)
-                        if position != path[-1]:
-                            path.append(position)
+                    _handle_replay_key(replay, event.key)
+                else:
+                    last_action, last_reward, path = _handle_manual_key(
+                        env, rng, event.key, actions, last_action, last_reward, path)
         if replay:
             replay.update(elapsed_seconds)
             draw(surface, replay.env, replay.last_action, replay.last_reward, fonts, replay.path, replay)

@@ -4,8 +4,9 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from demonstrations import make_demonstrations, run_imitation, save_demonstrations
-from correction import run_correction_from_checkpoint
+from experiments.demonstrations import make_demonstrations, run_imitation, save_demonstrations
+from experiments.common import find_checkpoint, load_source_config
+from experiments.correction import run_correction_from_checkpoint
 from plots import save_demonstration_plots, save_demonstration_correction_plots
 
 BASELINE_DIR = Path('runs/baseline-models')
@@ -14,13 +15,14 @@ HEAD_CONDITIONS = ['intact']
 CHECKPOINTS = ('reliable', 'final')
 
 def build_run_plan(seed_numbers):
+    # Pair source histories by seed before selecting reliable and final checkpoints.
     plan = []
     for number in seed_numbers:
         paired_seed = None
         paired_eval_seed = None
         for history in HISTORIES:
             source = BASELINE_DIR / f'{history}-beacon' / f'run-{history}-seed-#{number}'
-            config = json.loads((source / 'config.json').read_text())
+            config = load_source_config(source)
             if config['env_type'] != history:
                 raise ValueError(f'Source history does not match {source}')
             seed = config['PPO_settings']['seed']
@@ -29,20 +31,19 @@ def build_run_plan(seed_numbers):
                 paired_seed, paired_eval_seed = seed, eval_seed
             if (seed, eval_seed) != (paired_seed, paired_eval_seed):
                 raise ValueError(f'Seed block {number} does not match across histories')
+            # Include the initial checkpoint as the fresh-policy reference.
             if history == 'genuine-fixed':
-                initial = source / 'checkpoints' / 'step_0.zip'
-                if not initial.is_file():
-                    raise FileNotFoundError(initial)
+                if not (source / 'checkpoints' / 'step_0.zip').is_file():
+                    raise FileNotFoundError(source / 'checkpoints' / 'step_0.zip')
+                initial = find_checkpoint(source, 'initial')
                 for head in HEAD_CONDITIONS:
                     plan.append({'history': 'fresh', 'source_run': source, 'checkpoint': initial,
                                  'checkpoint_kind': 'initial', 'head': head, 'seed': seed,
                                  'eval_seed': eval_seed, 'seed_number': number})
             for kind in CHECKPOINTS:
-                paths = list((source / 'checkpoints').glob(f'step_*_{kind}*.zip'))
-                if len(paths) != 1:
-                    raise ValueError(f'Expected one {kind} checkpoint in {source}')
+                checkpoint = find_checkpoint(source, kind)
                 for head in HEAD_CONDITIONS:
-                    plan.append({'history': history, 'source_run': source, 'checkpoint': paths[0],
+                    plan.append({'history': history, 'source_run': source, 'checkpoint': checkpoint,
                                  'checkpoint_kind': kind, 'head': head, 'seed': seed,
                                  'eval_seed': eval_seed, 'seed_number': number})
     return plan
@@ -74,6 +75,7 @@ def parse_args():
     return args
 
 def build_correction_plan(batch_dir):
+    # Check that the saved batch is complete and still uses the original examples.
     batch_dir = Path(batch_dir)
     batch_config = json.loads((batch_dir / 'config.json').read_text())
     data_path = batch_dir / 'demonstrations.json'
@@ -100,7 +102,7 @@ def build_correction_plan(batch_dir):
         if source_hash != config['checkpoint_sha256']:
             raise ValueError(f'source checkpoint changed for {path.parent}')
         source_run = Path(config['source_run'])
-        source_config = json.loads((source_run / 'config.json').read_text())
+        source_config = load_source_config(source_run)
         if (source_config['PPO_settings']['seed'] != config['seed']
                 or source_config['training_eval_loop_settings']['eval_seed'] != config['eval_seed']):
             raise ValueError(f'seed settings do not match the source run for {path.parent}')
@@ -112,6 +114,7 @@ def build_correction_plan(batch_dir):
     return runs
 
 def run_demonstration_corrections(batch_dir, training_budget):
+    # Create a new output batch for PPO runs starting from demonstrated policies.
     runs = build_correction_plan(batch_dir)
     output_dir = Path(batch_dir) / 'ppo_corrections' / f'batch-{datetime.now():%Y%m%d-%H%M%S-%f}'
     output_dir.mkdir(parents=True, exist_ok=False)
