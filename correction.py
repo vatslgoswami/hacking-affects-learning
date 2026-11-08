@@ -55,7 +55,7 @@ def _create_follow_up_environments(source_config,
     test_env = GridWorld(*env_args, goal_split=goal_split, delivery_split=delivery_split)
     return train_env, test_env, delivery_curriculum
 
-def prepare_correction_model(checkpoint, train_env, seed):
+def prepare_correction_model(checkpoint, train_env, seed, reset_action_head=False):
     # Restore the source policy and attach the repaired environment.
     model = PPO.load(checkpoint, env=train_env, device='cpu')
     model.set_random_seed(seed)
@@ -65,6 +65,13 @@ def prepare_correction_model(checkpoint, train_env, seed):
         torch.manual_seed(seed)
         torch.nn.init.orthogonal_(model.policy.value_net.weight, gain=1.0)
         torch.nn.init.zeros_(model.policy.value_net.bias)
+
+    if reset_action_head:
+        # Replace the action preferences while keeping the policy's earlier layers.
+        with torch.random.fork_rng(devices=[]):
+            torch.manual_seed(seed)
+            torch.nn.init.orthogonal_(model.policy.action_net.weight, gain=0.01)
+            torch.nn.init.zeros_(model.policy.action_net.bias)
 
     # Start optimization and PPO updates afresh while keeping the policy weights.
     model.policy.optimizer = model.policy.optimizer_class(
@@ -87,7 +94,7 @@ def _save_follow_up_results(run_dir, run_id, model, train_env, loop_settings, so
 
 def run_correction_from_checkpoint(checkpoint, source_run, *, history, checkpoint_kind,
                                    output_dir='runs', training_budget=None,
-                                   condition='source', lineage=None,
+                                   condition='source', lineage=None, reset_action_head=False,
                                    target_task: Literal['genuine-variable', 'pickup-and-deliver']='genuine-variable'):
     # Load the source settings and select the follow-up budget.
     source_run = Path(source_run)
@@ -104,7 +111,7 @@ def run_correction_from_checkpoint(checkpoint, source_run, *, history, checkpoin
 
     # Create separate environments and restart training from the source policy.
     train_env, test_env, delivery_curriculum = _create_follow_up_environments(source_config, target_task)
-    model = prepare_correction_model(checkpoint, train_env, seed)
+    model = prepare_correction_model(checkpoint, train_env, seed, reset_action_head)
     source_timesteps = model.num_timesteps
 
     branch = 'ppo_transfer' if target_task == 'pickup-and-deliver' else 'ppo_correction'
@@ -132,8 +139,11 @@ def run_correction_from_checkpoint(checkpoint, source_run, *, history, checkpoin
             'checkpoint_kind': checkpoint_kind,
             'source_timesteps': source_timesteps,
             'condition': condition,
-            'retained': 'policy and shared feature extractor',
-            'reset': 'value head, optimizer, rollout buffer and training counters',
+            'retained': ('policy layers except action head and shared feature extractor'
+                         if reset_action_head else 'policy and shared feature extractor'),
+            'reset': ('action head, value head, optimizer, rollout buffer and training counters'
+                      if reset_action_head else 'value head, optimizer, rollout buffer and training counters'),
+            'action_head': 'fresh' if reset_action_head else 'intact',
         }
         if lineage is not None:
             source_details['demonstration_lineage'] = lineage

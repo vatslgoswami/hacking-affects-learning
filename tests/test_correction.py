@@ -111,6 +111,14 @@ class TestCorrection(unittest.TestCase):
             self.assertIsNone(first._last_obs)
             self.assertEqual(first.get_env().get_attr('env_type'), ['genuine-variable'])
 
+            reset = prepare_correction_model(checkpoint, correction_env(), 7, reset_action_head=True)
+            reset_again = prepare_correction_model(checkpoint, correction_env(), 7, reset_action_head=True)
+            for name, value in model.policy.state_dict().items():
+                if not name.startswith(('action_net.', 'value_net.')):
+                    self.assertTrue(torch.equal(value, reset.policy.state_dict()[name]), name)
+            self.assertFalse(torch.equal(model.policy.action_net.weight, reset.policy.action_net.weight))
+            self.assertTrue(torch.equal(reset.policy.action_net.weight, reset_again.policy.action_net.weight))
+
     def test_reliable_and_final_start_separate_correction_runs(self):
         split = development_goal_split()
         with tempfile.TemporaryDirectory() as directory:
