@@ -1,0 +1,30 @@
+category,condition,figure,seeds,seed_count,reached_seeds,reached_count,mean_confirmation_step_among_reached,requested_budget,actual_final_step
+baselines,genuine-fixed,baselines/genuine-fixed.png,"7, 9, 11, 13, 15, 17, 19",7,"7, 9, 11, 13, 15, 17, 19",7,28672.0,75000,75776
+baselines,genuine-variable,baselines/genuine-variable.png,"7, 9, 11, 13, 15, 17, 19",7,"7, 9, 11, 13, 15, 17, 19",7,55588.57142857143,75000,75776
+baselines,hacky-variable,baselines/hacky-variable.png,"7, 9, 11, 13, 15, 17, 19",7,"7, 9, 11, 13, 15, 17, 19",7,31890.285714285714,75000,75776
+baselines,pickup-and-deliver,baselines/pickup-and-deliver.png,"7, 9, 11, 13, 15, 17, 19",7,"7, 13, 15, 17, 19",5,246988.8,300000,301056
+checker_correction,genuine-fixed-reliable,checker_correction/genuine-fixed-reliable.png,"7, 9, 11, 13, 15, 17, 19",7,"7, 9, 11, 13",4,111104.0,200000,200704
+checker_correction,genuine-fixed-final,checker_correction/genuine-fixed-final.png,"7, 9, 11, 13, 15, 17, 19",7,,0,,200000,200704
+checker_correction,hacky-variable-reliable,checker_correction/hacky-variable-reliable.png,"7, 9, 11, 13, 15, 17, 19",7,"9, 11",2,164864.0,200000,200704
+checker_correction,hacky-variable-final,checker_correction/hacky-variable-final.png,"7, 9, 11, 13, 15, 17, 19",7,,0,,200000,200704
+action_head_reset,hacky-variable-reliable,action_head_reset/hacky-variable-reliable.png,"7, 9, 11, 13, 15, 17, 19",7,"7, 9, 11, 13, 15, 17, 19",7,66706.28571428571,200000,200704
+action_head_reset,hacky-variable-final,action_head_reset/hacky-variable-final.png,"7, 9, 11, 13, 15, 17, 19",7,"7, 9, 13, 15, 17, 19",6,95232.0,200000,200704
+delivery_transfer,genuine-fixed-reliable,delivery_transfer/genuine-fixed-reliable.png,"7, 9, 11, 13, 15, 17, 19",7,,0,,300000,301056
+delivery_transfer,genuine-fixed-final,delivery_transfer/genuine-fixed-final.png,"7, 9, 11, 13, 15, 17, 19",7,,0,,300000,301056
+delivery_transfer,genuine-variable-reliable,delivery_transfer/genuine-variable-reliable.png,"7, 9, 11, 13, 15, 17, 19",7,"7, 9, 11, 13, 15, 17, 19",7,206262.85714285713,300000,301056
+delivery_transfer,genuine-variable-final,delivery_transfer/genuine-variable-final.png,"7, 9, 11, 13, 15, 17, 19",7,"7, 9, 13, 15, 17, 19",6,246784.0,300000,301056
+delivery_transfer,hacky-variable-reliable,delivery_transfer/hacky-variable-reliable.png,"7, 9, 11, 13, 15, 17, 19",7,,0,,300000,301056
+delivery_transfer,hacky-variable-final,delivery_transfer/hacky-variable-final.png,"7, 9, 11, 13, 15, 17, 19",7,,0,,300000,301056
+post_demonstration_correction,genuine-fixed-reliable,post_demonstration_correction/genuine-fixed-reliable.png,"7, 9, 11, 13, 15, 17, 19",7,"7, 9, 11, 13, 15, 17, 19",7,19602.285714285714,50000,51200
+post_demonstration_correction,genuine-fixed-final,post_demonstration_correction/genuine-fixed-final.png,"7, 9, 11, 13, 15, 17, 19",7,"7, 9, 11, 13, 15, 17, 19",7,28379.428571428572,50000,51200
+post_demonstration_correction,hacky-variable-reliable,post_demonstration_correction/hacky-variable-reliable.png,"7, 9, 11, 13, 15, 17, 19",7,"7, 9, 11, 13, 15, 17, 19",7,25453.714285714286,50000,51200
+post_demonstration_correction,hacky-variable-final,post_demonstration_correction/hacky-variable-final.png,"7, 9, 11, 13, 15, 17, 19",7,"7, 9, 11, 13, 15, 17, 19",7,36571.42857142857,50000,51200
+post_demonstration_correction,fresh-initial,post_demonstration_correction/fresh-initial.png,"7, 9, 11, 13, 15, 17, 19",7,"7, 9, 11, 13, 15, 17, 19",7,14336.0,50000,51200
+post_demonstration_delivery,genuine-fixed-reliable,post_demonstration_delivery/genuine-fixed-reliable.png,"7, 9, 11, 13",4,"7, 11, 13",3,216405.33333333334,300000,301056
+post_demonstration_delivery,genuine-fixed-final,post_demonstration_delivery/genuine-fixed-final.png,"7, 9, 11, 13",4,"9, 11",2,250880.0,300000,301056
+post_demonstration_delivery,hacky-variable-reliable,post_demonstration_delivery/hacky-variable-reliable.png,"7, 9, 11, 13",4,13,1,245760.0,300000,301056
+post_demonstration_delivery,hacky-variable-final,post_demonstration_delivery/hacky-variable-final.png,"7, 9, 11, 13",4,13,1,284672.0,300000,301056
+delivery_transfer_matched,genuine-fixed-reliable,delivery_transfer_matched/genuine-fixed-reliable.png,"7, 9, 11, 13",4,,0,,300000,301056
+delivery_transfer_matched,genuine-fixed-final,delivery_transfer_matched/genuine-fixed-final.png,"7, 9, 11, 13",4,,0,,300000,301056
+delivery_transfer_matched,hacky-variable-reliable,delivery_transfer_matched/hacky-variable-reliable.png,"7, 9, 11, 13",4,,0,,300000,301056
+delivery_transfer_matched,hacky-variable-final,delivery_transfer_matched/hacky-variable-final.png,"7, 9, 11, 13",4,,0,,300000,301056
