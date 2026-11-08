@@ -168,7 +168,8 @@ def save_training_plots(run_dir):
         plt.close(entropy)
     return outputs
 
-def save_demonstration_plots(batch_dir, results, histories, checkpoint_kinds, head_conditions):
+def save_demonstration_plots(batch_dir, results, histories, checkpoint_kinds, head_conditions,
+                             target_task='genuine-variable'):
     # Compare the average learning curves across seeds.
     outputs = []
     for kind in checkpoint_kinds:
@@ -188,7 +189,9 @@ def save_demonstration_plots(batch_dir, results, histories, checkpoint_kinds, he
                             / len(selected) for i in range(len(steps))]
                     axes[0].plot(steps, success, label=history)
                     axes[1].plot(steps, loss, label=history)
-                axes[0].set_ylabel('Withheld-goal success rate')
+                withheld_label = ('Withheld-pair success rate' if target_task == 'pickup-and-deliver'
+                                  else 'Withheld-goal success rate')
+                axes[0].set_ylabel(withheld_label)
                 axes[0].set_ylim(-0.03, 1.03)
                 axes[1].set_ylabel('Held-out expert-action loss')
                 for axis in axes:
@@ -242,6 +245,45 @@ def save_demonstration_correction_plots(batch_dir):
             axes[0].legend(fontsize=8)
             fig.suptitle(f'PPO correction after demonstrations: {kind} source checkpoints')
             output = Path(batch_dir) / f'correction_after_demonstrations_{kind}.png'
+            fig.savefig(output, dpi=160)
+            outputs.append(output)
+        finally:
+            plt.close(fig)
+    return outputs
+
+def save_delivery_demonstration_comparisons(batch_dir, runs):
+    # Compare each demonstrated run with its matched original transfer run.
+    colors = {'genuine-fixed': '#526bf4', 'hacky-variable': '#b34684'}
+    outputs = []
+    for kind in ('reliable', 'final'):
+        fig, axes = plt.subplots(1, 3, figsize=(15, 4.5), layout='constrained')
+        try:
+            for history in ('genuine-fixed', 'hacky-variable'):
+                selected = [run for run in runs if run['history'] == history and run['checkpoint_kind'] == kind]
+                if not selected:
+                    continue
+                for condition, style in (('without', '--'), ('with', '-')):
+                    panels = [load_evaluation_summaries(run[condition]) for run in selected]
+                    steps = [row['n_timesteps'] for row in panels[0]]
+                    if any([row['n_timesteps'] for row in panel] != steps for panel in panels):
+                        raise ValueError(f'inconsistent delivery evaluation steps for {history}')
+                    fields = ('success_rate', 'withheld_success_rate', 'num_episodes_with_pickup')
+                    for axis, field in zip(axes, fields):
+                        values = [sum(panel[i][field] for panel in panels) / len(panels)
+                                  for i in range(len(steps))]
+                        if field == 'num_episodes_with_pickup':
+                            values = [value / 25 for value in values]
+                        axis.plot(steps, values, color=colors[history], linestyle=style,
+                                  label=f'{history}: {condition} demonstrations (n={len(panels)})')
+            for axis, title in zip(axes, ('Overall delivery success', 'Withheld-pair success', 'Pickup rate')):
+                axis.set_title(title)
+                axis.set_xlabel('PPO transitions')
+                axis.set_ylim(-0.03, 1.03)
+                axis.grid(alpha=0.25)
+            axes[0].set_ylabel('Episode fraction')
+            axes[0].legend(fontsize=8)
+            fig.suptitle(f'Delivery transfer: {kind} source checkpoints')
+            output = Path(batch_dir) / f'delivery_comparison_{kind}.png'
             fig.savefig(output, dpi=160)
             outputs.append(output)
         finally:

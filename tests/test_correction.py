@@ -13,6 +13,48 @@ from mlp_architecture import SharedTrunk
 from task_splits import development_goal_split
 
 class TestCorrection(unittest.TestCase):
+    def test_delivery_follow_up_uses_control_settings_and_normal_evaluations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / 'source'
+            source.mkdir()
+            env = GridWorld(7, [3, 3], [3, 0], 30, 'genuine-fixed')
+            model = PPO('MlpPolicy', env, seed=7, gamma=1, n_steps=8, batch_size=8,
+                        n_epochs=1, policy_kwargs={'features_extractor_class': SharedTrunk,
+                                                    'net_arch': {'pi': [], 'vf': []}})
+            checkpoint = source / 'source.zip'
+            model.save(checkpoint)
+            config = {'env_type': 'genuine-fixed', 'board_size': 7, 'start_pos': [3, 3],
+                      'fixed_goal_pos': [3, 0], 'max_actions': 30, 'PPO_settings': {'seed': 7},
+                      'training_eval_loop_settings': {'eval_seed': 8, 'eval_env_seed': 10,
+                          'confirmation_seed': 11, 'confirmation_env_seed': 12,
+                          'eval_episode_count': 25, 'eval_action_sampler_choice': 'stochastic'}}
+            (source / 'config.json').write_text(json.dumps(config))
+            result = run_correction_from_checkpoint(
+                checkpoint, source, history='genuine-fixed', checkpoint_kind='final',
+                output_dir=root / 'output', training_budget=16, target_task='pickup-and-deliver',
+            )
+            saved = json.loads((result / 'config.json').read_text())
+            settings = saved['training_eval_loop_settings']
+            self.assertEqual(saved['env_type'], 'pickup-and-deliver')
+            self.assertEqual(settings['delivery_curriculum'], {
+                'initial_probability': 0.5, 'decay_fraction': 0.5, 'max_distance': 2,
+            })
+            self.assertEqual(settings['entropy_schedule'], {
+                'initial_coef': 0.1, 'final_coef': 0.01, 'decay_fraction': 0.35,
+            })
+            summary = json.loads((result / 'evaluations' / 'step_0.json').read_text())
+            self.assertEqual(len(summary['delivery_panel']), 25)
+            self.assertEqual(summary['seen_episode_count'], 15)
+            self.assertEqual(summary['withheld_episode_count'], 10)
+            episodes = json.loads((result / 'evaluations' / 'episodes_0.json').read_text())['episodes']
+            self.assertTrue(all(not episode['initial_state']['carrying_package'] for episode in episodes))
+            initial = PPO.load(result / 'checkpoints' / 'step_0.zip')
+            self.assertTrue(torch.equal(initial.policy.action_net.weight, model.policy.action_net.weight))
+            self.assertTrue(torch.equal(initial.policy.features_extractor.network[0].weight,
+                                        model.policy.features_extractor.network[0].weight))
+            self.assertTrue((result / 'checkpoints' / 'step_16_final.zip').exists())
+
     def test_selected_policy_is_preserved_at_correction_start(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

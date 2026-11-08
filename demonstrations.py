@@ -1,6 +1,7 @@
 import hashlib
 import json
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import torch
@@ -9,7 +10,7 @@ from stable_baselines3 import PPO
 
 from evals import evaluate_model
 from gym_adapter import GridWorld
-from task_splits import development_goal_split
+from task_splits import development_delivery_split, development_goal_split
 
 STARTS = ((3, 3), (3, 0), (3, 1), (2, 0), (4, 0),
           (0, 0), (0, 6), (6, 0), (6, 6))
@@ -63,6 +64,43 @@ def make_demonstrations():
         env.close()
     return data
 
+def make_delivery_demonstrations(num_episodes=100, seed=2026):
+    split = development_delivery_split()
+    if num_episodes < 1 or num_episodes > min(len(split.seen), len(split.withheld)):
+        raise ValueError('demonstration count must fit in both delivery splits')
+    rng = np.random.default_rng(seed)
+    env = GridWorld(7, [3, 3], [3, 0], 30, 'pickup-and-deliver', delivery_split=split)
+    data = {'train': [], 'heldout': []}
+    try:
+        # Reserve complete delivery pairs for held-out evaluation.
+        for group, pairs in (('train', split.seen), ('heldout', split.withheld)):
+            indexes = rng.choice(len(pairs), size=num_episodes, replace=False)
+            for episode, index in enumerate(indexes):
+                package, destination = pairs[int(index)]
+                env.reset(seed=0, options={'delivery_pair': (package, destination)})
+                # Start immediately after the shortest path to pickup.
+                env.env._set_assisted_delivery_start(list(package))
+                env.env.action_count = sum(abs(a - b) for a, b in zip((3, 3), package)) + 1
+                for _ in range(env.env.max_actions):
+                    position = tuple(env.env.agent_pos)
+                    valid = optimal_actions(position, destination)
+                    action = valid[0]
+                    data[group].append({
+                        'episode': episode, 'package': list(package), 'goal': list(destination),
+                        'position': list(position), 'observation': env.agent_observation().tolist(),
+                        'action': action, 'optimal_actions': valid,
+                    })
+                    _, _, terminated, _, info = env.step(action)
+                    if terminated:
+                        if not info.get('genuine_delivery'):
+                            raise RuntimeError('expert path did not complete the delivery')
+                        break
+                else:
+                    raise RuntimeError('expert path exceeded the action limit')
+    finally:
+        env.close()
+    return data
+
 def save_demonstrations(data, path):
     # Save the exact examples used by every model.
     encoded = json.dumps(data, sort_keys=True, separators=(',', ':')).encode()
@@ -106,7 +144,8 @@ def prediction_metrics(model, heldout):
 
 def run_imitation(checkpoint, data, output_dir, *, seed, eval_seed, metadata,
                   head_condition='intact', updates=1000, batch_size=64,
-                  learning_rate=0.0003, eval_interval=100):
+                  learning_rate=0.0003, eval_interval=100,
+                  target_task: Literal['genuine-variable', 'pickup-and-deliver']='genuine-variable'):
     if updates < 1 or batch_size < 1 or eval_interval < 1:
         raise ValueError('updates, batch size and evaluation interval must be positive')
     output_dir = Path(output_dir)
@@ -118,8 +157,14 @@ def run_imitation(checkpoint, data, output_dir, *, seed, eval_seed, metadata,
     optimizer = torch.optim.Adam(model.policy.parameters(), lr=learning_rate, eps=1e-5)
     model.policy.optimizer = optimizer
     rng = np.random.default_rng(seed)
-    eval_env = GridWorld(7, [3, 3], [3, 0], 30, 'genuine-variable',
-                         goal_split=development_goal_split())
+    if target_task == 'genuine-variable':
+        eval_env = GridWorld(7, [3, 3], [3, 0], 30, 'genuine-variable',
+                             goal_split=development_goal_split())
+    elif target_task == 'pickup-and-deliver':
+        eval_env = GridWorld(7, [3, 3], [3, 0], 30, 'pickup-and-deliver',
+                             delivery_split=development_delivery_split())
+    else:
+        raise ValueError('unsupported imitation task')
     history = []
     try:
         for update in range(updates + 1):
@@ -127,7 +172,7 @@ def run_imitation(checkpoint, data, output_dir, *, seed, eval_seed, metadata,
                 # Evaluate without training on the held-out goals.
                 prediction = prediction_metrics(model, heldout)
                 rollout, episodes = evaluate_model(
-                    model, eval_env, 'genuine-variable', num_episodes=25, eval_seed=eval_seed,
+                    model, eval_env, target_task, num_episodes=25, eval_seed=eval_seed,
                     is_eval_greedy=False, record_episodes=update in (0, updates), eval_env_seed=10,
                 )
                 history.append({'updates': update, **prediction, 'rollout': rollout})
@@ -152,8 +197,10 @@ def run_imitation(checkpoint, data, output_dir, *, seed, eval_seed, metadata,
             'checkpoint': str(checkpoint),
             'checkpoint_sha256': hashlib.sha256(Path(checkpoint).read_bytes()).hexdigest(),
             'train_examples': len(data['train']), 'heldout_examples': len(data['heldout']),
+            'target_task': target_task,
             'optimizer': 'Adam', 'optimizer_epsilon': 1e-5,
-            'rollout_panel': '15 seen episodes and 10 held-out goal episodes',
+            'rollout_panel': ('15 seen and 10 held-out delivery pairs' if target_task == 'pickup-and-deliver'
+                              else '15 seen episodes and 10 held-out goal episodes'),
             'saved_model_note': 'Imitation model for evaluation; reset optimizer before PPO training.',
         }
         (output_dir / 'config.json').write_text(json.dumps(config, indent=2))

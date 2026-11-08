@@ -102,8 +102,8 @@ def get_run_settings(model:PPO, env:GridWorld, train_eval_loop_settings):
 
 if __name__=="__main__":
     #new seeds frozen for the experiment
-    seeds = [(17,18), (19,20)]
-    task_modes:list[EnvType] = ["hacky-variable", "genuine-fixed", "genuine-variable", "pickup-and-deliver"]
+    seeds = [(7,8),(9,10),(11, 12),(13, 14),(15,16),(17,18), (19,20)]
+    task_modes:list[EnvType] = ["pickup-and-deliver"]
     for task_mode in task_modes:
         for (model_sd, eval_sd) in seeds:
             model_seed = model_sd
