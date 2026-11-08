@@ -97,20 +97,26 @@ class EvaluationCheckpointCallback(BaseCallback):
         self.previous_passing_step = None
         self.reliable_step = None
         self.first_passing_step = None
-        # Shortcut success still needs its task-specific labels.
         self.thresholds = {
             'genuine-fixed': (0.90, 2),
             'genuine-variable': (0.80, 4),
             'pickup-and-deliver': (0.80, 4),
+            'hacky-variable': (0.80, 2),
         }.get(test_env.env_type)
+        if test_env.env_type == 'hacky-variable' and test_env.goal_split is None:
+            self.thresholds = None
 
     def _passes_competence(self, metrics):
         # Check the task's success and efficiency thresholds.
         if self.thresholds is None:
             raise ValueError('competence thresholds are not defined for this environment')
         success_threshold, extra_limit = self.thresholds
-        extra_actions = metrics.get('seen_average_extra_actions', metrics['average_extra_actions'])
-        success_rate = metrics.get('seen_success_rate', metrics['success_rate'])
+        if self.test_env.env_type == 'hacky-variable':
+            extra_actions = metrics['seen_shortcut_average_extra_actions']
+            success_rate = metrics['seen_shortcut_success_rate']
+        else:
+            extra_actions = metrics.get('seen_average_extra_actions', metrics['average_extra_actions'])
+            success_rate = metrics.get('seen_success_rate', metrics['success_rate'])
         return (success_rate >= success_threshold
                 and extra_actions is not None and extra_actions <= extra_limit)
 
@@ -164,6 +170,9 @@ class EvaluationCheckpointCallback(BaseCallback):
             'is_reliable_checkpoint': newly_reliable,
             'confirmation': confirmation,
         }
+        if self.test_env.env_type == 'hacky-variable':
+            competence_metrics['success_measure'] = 'seen_shortcut_success_rate'
+            competence_metrics['efficiency_measure'] = 'seen_shortcut_average_extra_actions'
         return competence_metrics
 
     def _save_checkpoint_if_needed(self, steps, episodes, competence, *, initial, final):
@@ -195,10 +204,15 @@ class EvaluationCheckpointCallback(BaseCallback):
             competence_status = 'not checked for this task'
         else:
             competence_status = 'not yet confirmed'
-        print(f"Evaluation at {steps} transitions:\nSuccess Rate: {success_rate}\n"
+        success_label = 'Genuine success rate' if self.test_env.env_type == 'hacky-variable' else 'Success Rate'
+        print(f"Evaluation at {steps} transitions:\n{success_label}: {success_rate}\n"
               f"Avg Return: {avg_return}\nEpisode Length: {episode_length}\n"
               f"Extra actions among successes: {metrics['average_extra_actions']}\n"
               f"Competence: {competence_status}\n======================")
+        if self.test_env.env_type == 'hacky-variable':
+            print(f"Shortcut success rate: {metrics['shortcut_success_rate']}\n"
+                  f"Shortcut visit rate: {metrics['shortcut_visit_rate']}\n"
+                  f"Total accepted success rate: {metrics['total_success_rate']}")
 
     def _save_and_evaluate(self, final=False, initial=False):
         # Evaluate the current policy and save its summary.

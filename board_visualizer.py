@@ -50,6 +50,8 @@ class ReplaySession:
     def outcome(self):
         if self.episode['genuine_success']:
             return 'Success'
+        if self.episode.get('accepted_false_completion', False):
+            return 'Shortcut accepted'
         if self.episode['truncated']:
             return 'Episode truncated'
         if self.episode['steps'] and self.episode['steps'][-1]['info'].get('move_limit_reached'):

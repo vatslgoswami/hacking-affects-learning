@@ -89,6 +89,8 @@ def save_run_config(RUN_DIR, settings, run_id):
         config['goal_split'] = settings['goal_split']
     if 'delivery_split' in settings:
         config['delivery_split'] = settings['delivery_split']
+    if 'source_checkpoint' in settings:
+        config['source_checkpoint'] = settings['source_checkpoint']
     try:
         repo_dir = Path(__file__).resolve().parent
         config['code_revision'] = subprocess.check_output(

@@ -44,15 +44,25 @@ def create_evaluation_figure(summaries, run_name, config=None):
         ('average_episode_length', 'Mean episode length\n(all episodes)', '#25866c'),
     ]
     for axis, (key, axis_label, color) in zip(axes, metrics):
+        success_label = ('Genuine' if any('shortcut_success_rate' in summary for summary in summaries)
+                         else 'Overall')
         axis.plot(steps, [summary[key] for summary in summaries], marker='o', color=color,
-                  label='Overall' if key == 'success_rate' else None)
+                  label=success_label if key == 'success_rate' else None)
         axis.set_ylabel(axis_label)
         axis.grid(True, alpha=0.25)
     if any('seen_success_rate' in summary for summary in summaries):
+        shortcut_metrics = any('shortcut_success_rate' in summary for summary in summaries)
         axes[0].plot(steps, [summary.get('seen_success_rate') for summary in summaries],
-                     marker='o', color='#25866c', label='Seen')
+                     marker='o', color='#25866c', label='Seen genuine' if shortcut_metrics else 'Seen')
         axes[0].plot(steps, [summary.get('withheld_success_rate') for summary in summaries],
-                     marker='o', color='#d77a2e', label='Withheld')
+                     marker='o', color='#d77a2e', label='Withheld genuine' if shortcut_metrics else 'Withheld')
+        axes[0].legend(fontsize=8)
+    if any('shortcut_success_rate' in summary for summary in summaries):
+        axes[0].set_ylabel('Completion rate')
+        axes[0].plot(steps, [summary.get('shortcut_success_rate') for summary in summaries],
+                     marker='o', color='#b34684', label='Shortcut')
+        axes[0].plot(steps, [summary.get('total_success_rate') for summary in summaries],
+                     marker='o', color='#475166', linestyle='--', label='Total accepted')
         axes[0].legend(fontsize=8)
     reliable_step = next((s['n_timesteps'] for s in summaries
                           if s.get('competence', {}).get('is_reliable_checkpoint')), None)
@@ -156,6 +166,86 @@ def save_training_plots(run_dir):
     finally:
         plt.close(losses)
         plt.close(entropy)
+    return outputs
+
+def save_demonstration_plots(batch_dir, results, histories, checkpoint_kinds, head_conditions):
+    # Compare the average learning curves across seeds.
+    outputs = []
+    for kind in checkpoint_kinds:
+        for head in head_conditions:
+            fig, axes = plt.subplots(1, 2, figsize=(11, 4), layout='constrained')
+            try:
+                for history in (*histories, 'fresh'):
+                    selected = [item for item in results if item['history'] == history
+                                and item['head'] == head
+                                and item['checkpoint_kind'] == ('initial' if history == 'fresh' else kind)]
+                    if not selected:
+                        continue
+                    steps = [row['updates'] for row in selected[0]['metrics']]
+                    success = [sum(item['metrics'][i]['rollout']['withheld_success_rate'] for item in selected)
+                               / len(selected) for i in range(len(steps))]
+                    loss = [sum(item['metrics'][i]['prediction_loss'] for item in selected)
+                            / len(selected) for i in range(len(steps))]
+                    axes[0].plot(steps, success, label=history)
+                    axes[1].plot(steps, loss, label=history)
+                axes[0].set_ylabel('Withheld-goal success rate')
+                axes[0].set_ylim(-0.03, 1.03)
+                axes[1].set_ylabel('Held-out expert-action loss')
+                for axis in axes:
+                    axis.set_xlabel('Imitation updates')
+                    axis.grid(alpha=0.25)
+                    axis.legend()
+                fig.suptitle(f'{kind} source checkpoint, {head} action head')
+                output = Path(batch_dir) / f'{kind}_{head}.png'
+                fig.savefig(output, dpi=160)
+                outputs.append(output)
+            finally:
+                plt.close(fig)
+    return outputs
+
+def save_demonstration_correction_plots(batch_dir):
+    # Compare correction curves after demonstrations.
+    runs = []
+    for config_path in sorted(Path(batch_dir).glob('*/config.json')):
+        config = json.loads(config_path.read_text())
+        source = config['source_checkpoint']
+        runs.append({'history': source['history'], 'kind': source['checkpoint_kind'],
+                     'condition': source['condition'],
+                     'metrics': load_evaluation_summaries(config_path.parent)})
+    colors = {'hacky-variable': '#b34684', 'genuine-fixed': '#526bf4',
+              'genuine-variable': '#25866c', 'fresh': '#d77a2e'}
+    outputs = []
+    for kind in sorted({run['kind'] for run in runs} - {'initial'}):
+        fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), layout='constrained')
+        try:
+            for history in sorted({run['history'] for run in runs}):
+                for condition, style in (('demonstrations', '-'),):
+                    selected = [run for run in runs if run['history'] == history
+                                and run['kind'] == ('initial' if history == 'fresh' else kind)
+                                and run['condition'] == condition]
+                    if not selected:
+                        continue
+                    steps = [row['n_timesteps'] for row in selected[0]['metrics']]
+                    if any([row['n_timesteps'] for row in run['metrics']] != steps for run in selected):
+                        raise ValueError(f'inconsistent correction evaluation steps for {history}')
+                    for axis, field in zip(axes, ('withheld_success_rate', 'average_episode_length')):
+                        means = [sum(run['metrics'][i][field] for run in selected) / len(selected)
+                                 for i in range(len(steps))]
+                        axis.plot(steps, means, color=colors.get(history), linestyle=style,
+                                  label=f'{history}: {condition} (n={len(selected)})')
+            axes[0].set_ylabel('Withheld-goal success rate')
+            axes[0].set_ylim(-0.03, 1.03)
+            axes[1].set_ylabel('Mean episode length (all goals)')
+            for axis in axes:
+                axis.set_xlabel('Correction transitions')
+                axis.grid(alpha=0.25)
+            axes[0].legend(fontsize=8)
+            fig.suptitle(f'PPO correction after demonstrations: {kind} source checkpoints')
+            output = Path(batch_dir) / f'correction_after_demonstrations_{kind}.png'
+            fig.savefig(output, dpi=160)
+            outputs.append(output)
+        finally:
+            plt.close(fig)
     return outputs
 
 def main():
